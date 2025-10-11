@@ -460,8 +460,18 @@ class ActiveLearner:
             
         Returns:
             Augmented sequence [seq_len]
+            
+        Raises:
+            ValueError: If symptom_id is 0 (padding token)
         """
         device = symptoms.device
+        
+        # Validate symptom_id
+        if symptom_id == 0:
+            raise ValueError(
+                "Cannot add padding token (symptom_id=0) to sequence. "
+                "Padding tokens are reserved for empty positions."
+            )
         
         # Find first padding position
         non_zero = (symptoms != 0).cpu().numpy()

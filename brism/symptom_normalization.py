@@ -220,6 +220,9 @@ class SymptomNormalizer:
             if score > best_score:
                 best_score = score
                 best_match = canonical
+                # Early stopping: if we found a perfect match, no need to continue
+                if score == 1.0:
+                    break
         
         return best_match, best_score
     

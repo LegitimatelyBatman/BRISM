@@ -219,7 +219,12 @@ class BRISMEnsemble:
         
         # Compute mean and std
         mean_probs = all_probs.mean(dim=0)
-        std_probs = all_probs.std(dim=0)
+        
+        # Handle edge case: n_samples=1 produces NaN std
+        if n_samples == 1:
+            std_probs = torch.zeros_like(mean_probs)
+        else:
+            std_probs = all_probs.std(dim=0)
         
         # Compute uncertainty metrics
         epistemic_uncertainty = std_probs.mean(dim=-1)
