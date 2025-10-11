@@ -5,7 +5,8 @@ Loss functions for BRISM training.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple
+from typing import Tuple, Optional
+from .icd_hierarchy import ICDHierarchy, compute_hierarchical_loss
 
 
 class BRISMLoss(nn.Module):
@@ -16,15 +17,25 @@ class BRISMLoss(nn.Module):
     3. Cycle consistency loss
     """
     
-    def __init__(self, kl_weight: float = 0.1, cycle_weight: float = 1.0):
+    def __init__(self, kl_weight: float = 0.1, cycle_weight: float = 1.0,
+                 icd_hierarchy: Optional[ICDHierarchy] = None, 
+                 hierarchical_weight: float = 0.5,
+                 hierarchical_temperature: float = 1.0):
         """
         Args:
             kl_weight: Weight for KL divergence term
             cycle_weight: Weight for cycle consistency term
+            icd_hierarchy: Optional ICD hierarchy for hierarchical loss
+            hierarchical_weight: Weight for hierarchical loss component (0-1)
+            hierarchical_temperature: Temperature for hierarchical distance penalty
         """
         super().__init__()
         self.kl_weight = kl_weight
         self.cycle_weight = cycle_weight
+        self.icd_hierarchy = icd_hierarchy
+        self.hierarchical_weight = hierarchical_weight
+        self.hierarchical_temperature = hierarchical_temperature
+        self._distance_matrix = None
         
     def kl_divergence(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -44,7 +55,7 @@ class BRISMLoss(nn.Module):
     
     def reconstruction_loss_icd(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
-        Reconstruction loss for ICD predictions (cross-entropy).
+        Reconstruction loss for ICD predictions (cross-entropy with optional hierarchical loss).
         
         Args:
             logits: Predicted logits [batch_size, icd_vocab_size]
@@ -53,7 +64,26 @@ class BRISMLoss(nn.Module):
         Returns:
             Loss [batch_size]
         """
-        return F.cross_entropy(logits, target, reduction='none')
+        # Standard cross-entropy loss
+        ce_loss = F.cross_entropy(logits, target, reduction='none')
+        
+        # Add hierarchical loss if hierarchy is provided
+        if self.icd_hierarchy is not None and self.hierarchical_weight > 0:
+            # Get distance matrix (cache it for efficiency)
+            if self._distance_matrix is None:
+                self._distance_matrix = self.icd_hierarchy.get_distance_tensor(device=logits.device)
+            
+            # Compute hierarchical loss
+            hier_loss = compute_hierarchical_loss(
+                logits, target, self._distance_matrix, 
+                temperature=self.hierarchical_temperature
+            )
+            
+            # Combine losses
+            total_loss = (1 - self.hierarchical_weight) * ce_loss + self.hierarchical_weight * hier_loss
+            return total_loss
+        
+        return ce_loss
     
     def reconstruction_loss_symptoms(self, logits: torch.Tensor, target: torch.Tensor, 
                                     pad_idx: int = 0) -> torch.Tensor:
