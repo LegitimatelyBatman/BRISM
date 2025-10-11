@@ -1,0 +1,68 @@
+# ICD-10 Code Mapping Configuration
+# This file maps vocabulary indices to ICD-10 codes for hierarchical loss computation
+# 
+# Format:
+#   icd_codes:
+#     <vocab_index>: "<ICD-10-CM code>"
+#
+# Example structure (simplified):
+# - E10-E14: Diabetes mellitus
+#   - E11: Type 2 diabetes mellitus
+#     - E11.6: Type 2 diabetes mellitus with other specified complications
+#       - E11.65: Type 2 diabetes mellitus with hyperglycemia
+#       - E11.69: Type 2 diabetes mellitus with other specified complication
+#     - E11.9: Type 2 diabetes mellitus without complications
+# - I10-I15: Hypertensive diseases
+#   - I10: Essential (primary) hypertension
+# - J40-J47: Chronic lower respiratory diseases
+#   - J44: Other chronic obstructive pulmonary disease
+
+icd_codes:
+  # Diabetes mellitus (Type 2)
+  0: "E11.65"  # Type 2 diabetes with hyperglycemia
+  1: "E11.69"  # Type 2 diabetes with other complication
+  2: "E11.9"   # Type 2 diabetes without complications
+  3: "E11.21"  # Type 2 diabetes with diabetic nephropathy
+  4: "E11.22"  # Type 2 diabetes with diabetic chronic kidney disease
+  
+  # Diabetes mellitus (Type 1)
+  5: "E10.65"  # Type 1 diabetes with hyperglycemia
+  6: "E10.9"   # Type 1 diabetes without complications
+  
+  # Hypertension
+  7: "I10"     # Essential (primary) hypertension
+  8: "I11.0"   # Hypertensive heart disease with heart failure
+  9: "I11.9"   # Hypertensive heart disease without heart failure
+  
+  # Respiratory diseases
+  10: "J44.0"  # COPD with acute lower respiratory infection
+  11: "J44.1"  # COPD with acute exacerbation
+  12: "J44.9"  # COPD, unspecified
+  13: "J45.20" # Mild intermittent asthma, uncomplicated
+  14: "J45.30" # Mild persistent asthma, uncomplicated
+  
+  # Cardiovascular diseases
+  15: "I21.0"  # ST elevation myocardial infarction
+  16: "I21.4"  # Non-ST elevation myocardial infarction
+  17: "I25.10" # Atherosclerotic heart disease
+  
+  # Mental and behavioral disorders
+  18: "F32.0"  # Mild depressive episode
+  19: "F32.1"  # Moderate depressive episode
+  20: "F32.2"  # Severe depressive episode without psychotic features
+  21: "F41.0"  # Panic disorder
+  22: "F41.1"  # Generalized anxiety disorder
+  
+  # Infectious diseases
+  23: "A41.9"  # Sepsis, unspecified organism
+  24: "J18.9"  # Pneumonia, unspecified organism
+  25: "N39.0"  # Urinary tract infection
+  
+  # NOTE: For a complete medical application, you would need to map
+  # all codes in your vocabulary. This is a demonstration subset.
+  # The remaining indices (26-499) would map to additional ICD-10 codes.
+  # 
+  # You can extend this file based on your actual ICD vocabulary:
+  # - Download ICD-10-CM codes from: https://www.cms.gov/medicare/coding-billing/icd-10-codes
+  # - Map your model's vocabulary indices to actual ICD codes
+  # - Group related codes under the same categories for better hierarchical loss
