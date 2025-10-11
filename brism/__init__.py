@@ -53,6 +53,10 @@ from .active_learning import (
     ActiveLearner,
     demonstrate_active_learning
 )
+from .config_validator import (
+    ConfigValidator,
+    validate_config_file
+)
 
 __version__ = "3.0.1"
 __all__ = [
@@ -99,4 +103,6 @@ __all__ = [
     "create_default_medical_synonyms",
     "ActiveLearner",
     "demonstrate_active_learning",
+    "ConfigValidator",
+    "validate_config_file",
 ]
