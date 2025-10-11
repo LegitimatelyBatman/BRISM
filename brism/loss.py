@@ -496,20 +496,26 @@ class BRISMLoss(nn.Module):
             pos_mask = positive_mask[i]
             if not pos_mask.any():
                 continue
-            
+
             # Numerator: exp(similarity to positives)
             pos_sim = similarity[i][pos_mask]
-            
+
             # Denominator: exp(similarity to all except self)
             all_sim = similarity[i][diagonal_mask[i]]
-            
+
+            # Use log-sum-exp for numerical stability. This prevents overflow
+            # when the temperature is very small and similarities become
+            # extremely large (e.g., during calibration sweeps).
+            pos_logsumexp = torch.logsumexp(pos_sim, dim=0)
+            all_logsumexp = torch.logsumexp(all_sim, dim=0)
+
             # InfoNCE loss: -log(sum(exp(pos)) / sum(exp(all)))
-            loss = -torch.log(pos_sim.exp().sum() / all_sim.exp().sum() + 1e-8)
+            loss = -(pos_logsumexp - all_logsumexp)
             losses.append(loss)
-        
+
         if len(losses) == 0:
             return torch.tensor(0.0, device=latents.device)
-        
+
         return torch.stack(losses).mean()
     
     def forward_loss(self, model_output: Tuple, symptoms: torch.Tensor, 

@@ -592,9 +592,36 @@ class BRISM(nn.Module):
         
         # Decode to ICD with temperature scaling
         icd_logits = self.icd_decoder(z) / self.temperature
-        
+
         return icd_logits, mu, logvar
-    
+
+    def forward(
+        self,
+        symptoms: torch.Tensor,
+        timestamps: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Convenience forward method that matches ``nn.Module`` expectations.
+
+        This enables utilities such as :func:`torch.onnx.export` that expect a
+        ``forward`` implementation while keeping :meth:`forward_path` as the
+        detailed entry point used throughout the codebase.
+
+        Args:
+            symptoms: Symptom token IDs ``[batch_size, seq_len]``.
+            timestamps: Optional timestamps ``[batch_size, seq_len]``.
+
+        Returns:
+            Tuple containing:
+                * ``icd_probs`` – probability distribution over ICD codes
+                  ``[batch_size, icd_vocab_size]``.
+                * ``latent_mu`` – latent mean from the encoder
+                  ``[batch_size, latent_dim]``.
+        """
+        icd_logits, mu, _ = self.forward_path(symptoms, timestamps)
+        icd_probs = F.softmax(icd_logits, dim=-1)
+        return icd_probs, mu
+
     def reverse_path(self, icd_codes: torch.Tensor, target_symptoms: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Reverse path: ICD -> latent -> symptom sequence.
