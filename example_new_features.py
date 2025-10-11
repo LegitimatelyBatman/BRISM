@@ -1,5 +1,7 @@
 """
-Comprehensive example demonstrating all 6 new BRISM features.
+Comprehensive example demonstrating all BRISM v3.0.0 features.
+
+This is the main example file for BRISM v3.0.0.
 
 Features demonstrated:
 1. Interpretability Tools (attention visualization, integrated gradients, counterfactuals)
@@ -8,6 +10,8 @@ Features demonstrated:
 4. Ensemble Uncertainty Quantification
 5. Symptom Synonym Handling
 6. Active Learning Interface
+
+All features shown here are now standard in v3.0.0 (no optional flags needed).
 """
 
 import torch
@@ -102,8 +106,8 @@ def main():
         icd_vocab_size=50,
         latent_dim=32,
         max_symptom_length=20,
-        use_attention=True,
         mc_samples=20
+        # Attention always enabled in v3.0.0
     )
     model = BRISM(config).to(device)
     print(f"Created BRISM model with {sum(p.numel() for p in model.parameters())} parameters")

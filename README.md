@@ -1,7 +1,22 @@
-# BRISM
+# BRISM v3.0.0
 Bayesian Reciprocal ICD-Symptom Model
 
 A deep learning model for bidirectional mapping between medical symptoms and ICD diagnosis codes with uncertainty quantification.
+
+> **⚠️ Version 3.0.0 Breaking Changes**: This is a major refactoring release. See [BREAKING_CHANGES.md](BREAKING_CHANGES.md) for migration guide from v0.2.0.
+
+## What's New in v3.0.0
+
+**Simplified & Streamlined:**
+- ✅ Attention-based aggregation (always enabled)
+- ✅ Temporal encoding for symptom sequences (always enabled)
+- ✅ Focal loss for handling class imbalance (always enabled)
+- ✅ Contrastive learning (enabled by default, weight=0.5)
+- ✅ Hierarchical ICD loss (enabled by default, weight=0.3)
+- ✅ Temperature scaling for calibration (always enabled)
+- ✅ Beam search for generation (always enabled)
+
+All "optional" flags have been removed. Advanced features are now standard.
 
 ## Overview
 
@@ -15,25 +30,37 @@ BRISM (Bayesian Reciprocal ICD-Symptom Model) implements a dual encoder-decoder 
 ### Key Components
 
 1. **Dual Encoder-Decoder Pairs**:
-   - Symptom Encoder: Maps symptom sequences → latent distribution
+   - Symptom Encoder: Maps symptom sequences → latent distribution (with attention aggregation)
    - ICD Encoder: Maps ICD codes → latent distribution
-   - Symptom Decoder: Generates symptom sequences from latent
-   - ICD Decoder: Predicts ICD probabilities from latent
+   - Symptom Decoder: Generates symptom sequences from latent (with beam search)
+   - ICD Decoder: Predicts ICD probabilities from latent (with temperature scaling)
 
 2. **Shared Latent Space**: Both paths use the same latent representation, enabling:
    - Bidirectional translation
    - Cycle consistency constraints
    - Multi-task learning
+   - Contrastive learning for better representations
 
-3. **Loss Functions**:
-   - **Reconstruction Loss**: VAE-style reconstruction for both directions
+3. **Advanced Features (All Enabled)**:
+   - **Attention Mechanism**: Self-attention for symptom aggregation
+   - **Temporal Encoding**: Positional or timestamp-based encoding for symptom sequences
+   - **Focal Loss**: Handles class imbalance in ICD prediction
+   - **Hierarchical Loss**: Respects ICD-10 hierarchy relationships
+   - **Contrastive Loss**: Improves latent space quality
+   - **Temperature Scaling**: Calibrates prediction probabilities
+
+4. **Loss Functions**:
+   - **Reconstruction Loss**: Focal loss for ICD, cross-entropy for symptoms
    - **KL Divergence**: Regularizes latent distributions
    - **Cycle Consistency**: Ensures latent representations align across cycles
+   - **Contrastive Loss**: Brings similar diagnoses closer in latent space
+   - **Hierarchical Loss**: Penalizes predictions far from true class in ICD hierarchy
 
-4. **Uncertainty Quantification**:
+5. **Uncertainty Quantification**:
    - Monte Carlo dropout during inference
    - Confidence intervals for predictions
    - Epistemic uncertainty estimation
+   - Ensemble methods (pseudo-ensemble with dropout)
 
 ## Installation
 
@@ -56,12 +83,14 @@ import torch
 from brism import BRISM, BRISMConfig, train_brism, diagnose_with_confidence
 from brism.loss import BRISMLoss
 
-# Configure model
+# Configure model (v3.0.0 - simplified configuration)
 config = BRISMConfig(
     symptom_vocab_size=1000,
     icd_vocab_size=500,
     latent_dim=64,
     mc_samples=20
+    # Attention, temporal encoding, and other advanced features
+    # are ALWAYS enabled in v3.0.0 - no flags needed!
 )
 
 # Initialize model
@@ -69,7 +98,15 @@ model = BRISM(config)
 
 # Training (with your data)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-loss_fn = BRISMLoss(kl_weight=0.1, cycle_weight=1.0)
+
+# Loss function with new v3.0.0 defaults
+loss_fn = BRISMLoss(
+    kl_weight=0.1, 
+    cycle_weight=1.0,
+    contrastive_weight=0.5,  # Enabled by default
+    hierarchical_weight=0.3,  # Enabled by default
+    focal_gamma=2.0  # Focal loss always enabled
+)
 
 history = train_brism(
     model=model,
@@ -110,17 +147,27 @@ This ensures both directions and cycle consistency are jointly optimized.
 
 ## Example Usage
 
-Run the example script to see the model in action with synthetic data:
+Run the example scripts to see the model in action with synthetic data:
 
 ```bash
+# Basic example with synthetic data
 python example.py
+
+# Comprehensive example showing all v3.0.0 features
+python example_new_features.py
+
+# Enhanced features example (temporal encoding, focal loss, etc.)
+python example_enhanced_features.py
 ```
 
-This demonstrates:
-- Model initialization and training
+These demonstrate:
+- Model initialization and training with new v3.0.0 defaults
 - Diagnosis with confidence intervals
-- Symptom generation from ICD codes
-- Uncertainty quantification
+- Interpretability tools (attention visualization, integrated gradients)
+- Beam search for symptom generation
+- Ensemble uncertainty quantification
+- Active learning interface
+- And more!
 
 ## Testing
 

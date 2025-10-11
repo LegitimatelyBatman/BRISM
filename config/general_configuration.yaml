@@ -1,0 +1,69 @@
+# BRISM v3.0.0 General Configuration
+# Default hyperparameters for the Bayesian Reciprocal ICD-Symptom Model
+#
+# All parameters can be overridden when creating BRISMConfig in Python
+
+# Core Architecture Parameters
+model:
+  symptom_vocab_size: 1000  # Size of symptom vocabulary
+  icd_vocab_size: 500  # Size of ICD code vocabulary
+  symptom_embed_dim: 128  # Symptom embedding dimension
+  icd_embed_dim: 128  # ICD embedding dimension
+  encoder_hidden_dim: 256  # Encoder hidden layer size
+  latent_dim: 64  # Latent space dimension
+  decoder_hidden_dim: 256  # Decoder hidden layer size
+  max_symptom_length: 50  # Maximum symptom sequence length
+  dropout_rate: 0.2  # Dropout rate for regularization
+  mc_samples: 20  # Monte Carlo samples for uncertainty quantification
+
+# Temporal Encoding (Always Enabled in v3.0.0)
+temporal:
+  encoding_type: 'positional'  # 'positional' or 'timestamp'
+
+# Advanced Features (All Enabled by Default in v3.0.0)
+advanced:
+  # Temperature scaling for calibration (always enabled)
+  temperature: 1.0
+  
+  # Beam search for generation (always enabled)
+  beam_width: 5
+  
+  # Ensemble predictions (always enabled)
+  n_ensemble_models: 5
+
+# Loss Function Weights
+loss:
+  kl_weight: 0.1  # KL divergence weight
+  cycle_weight: 1.0  # Cycle consistency weight
+  
+  # Contrastive learning (always enabled, default weight 0.5)
+  contrastive_weight: 0.5
+  contrastive_margin: 1.0
+  contrastive_temperature: 0.5
+  
+  # Hierarchical ICD loss (always enabled, default weight 0.3)
+  hierarchical_weight: 0.3
+  hierarchical_temperature: 1.0
+  
+  # Focal loss (always enabled in v3.0.0)
+  focal_gamma: 2.0
+
+# Training Parameters
+training:
+  learning_rate: 0.001
+  batch_size: 32
+  num_epochs: 50
+  early_stopping_patience: 10
+  
+  # Temperature calibration (always performed)
+  calibration:
+    enabled: true
+    max_iter: 50
+    lr: 0.01
+
+# Evaluation Parameters
+evaluation:
+  # Comprehensive evaluation (always used)
+  top_k: 5
+  confidence_level: 0.95
+  n_bins: 10  # For calibration metrics

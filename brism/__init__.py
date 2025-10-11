@@ -54,7 +54,7 @@ from .active_learning import (
     demonstrate_active_learning
 )
 
-__version__ = "0.2.0"
+__version__ = "3.0.0"
 __all__ = [
     "BRISM", 
     "BRISMConfig", 

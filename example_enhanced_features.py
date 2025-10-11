@@ -115,8 +115,8 @@ def main():
     config = BRISMConfig(
         symptom_vocab_size=100,
         icd_vocab_size=50,
-        max_symptom_length=20,
-        use_attention=True
+        max_symptom_length=20
+        # Attention always enabled in v3.0.0
     )
     model = BRISM(config)
     print(f"Created model with {sum(p.numel() for p in model.parameters()):,} parameters")
@@ -180,12 +180,11 @@ def main():
         symptom_vocab_size=100,
         icd_vocab_size=50,
         max_symptom_length=20,
-        use_attention=True,
-        use_temporal_encoding=True,
         temporal_encoding_type='positional'
+        # Attention and temporal encoding always enabled in v3.0.0
     )
     model_temporal = BRISM(config_temporal)
-    print(f"Created temporal model with positional encoding")
+    print(f"Created temporal model with positional encoding (always enabled)")
     print()
     
     # Create dataset with temporal information
@@ -297,8 +296,7 @@ def main():
         kl_weight=0.1,
         cycle_weight=1.0,
         class_weights=class_weights,
-        use_focal_loss=True,
-        focal_gamma=2.0
+        focal_gamma=2.0  # Focal loss always enabled in v3.0.0
     )
     print()
     

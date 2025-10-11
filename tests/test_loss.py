@@ -246,7 +246,7 @@ class TestClassWeights(unittest.TestCase):
             kl_weight=0.1,
             cycle_weight=1.0,
             class_weights=class_weights,
-            use_focal_loss=False
+            focal_gamma=2.0  # Focal loss always enabled
         )
         
         logits = torch.randn(4, 50)
@@ -258,12 +258,11 @@ class TestClassWeights(unittest.TestCase):
         self.assertTrue((loss >= 0).all())
     
     def test_brism_loss_with_focal_loss(self):
-        """Test BRISM loss with focal loss."""
+        """Test BRISM loss with focal loss (always enabled)."""
         loss_fn = BRISMLoss(
             kl_weight=0.1,
             cycle_weight=1.0,
-            use_focal_loss=True,
-            focal_gamma=2.0
+            focal_gamma=2.0  # Focal loss always enabled
         )
         
         logits = torch.randn(4, 50)
