@@ -3,8 +3,12 @@ Configuration schema validation for YAML configuration files.
 """
 
 import yaml
+import logging
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Set
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class ConfigValidator:
@@ -201,9 +205,9 @@ class ConfigValidator:
         
         # Report results
         if self.warnings:
-            print("Configuration warnings:")
+            logger.warning("Configuration warnings:")
             for warning in self.warnings:
-                print(f"  - {warning}")
+                logger.warning(f"  - {warning}")
         
         if self.errors:
             error_msg = "Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in self.errors)

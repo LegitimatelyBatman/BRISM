@@ -5,12 +5,16 @@ Medical data preprocessing utilities for MIMIC-III/IV and other clinical dataset
 import pandas as pd
 import numpy as np
 import torch
+import logging
 from torch.utils.data import Dataset
 from typing import Dict, List, Tuple, Optional, Set
 from pathlib import Path
 import re
 from collections import defaultdict
 import warnings
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class ICDNormalizer:
@@ -431,11 +435,11 @@ def load_mimic_data(
     if dry_run:
         n_diagnoses = len(diagnoses_df)
         n_notes = len(notes_df)
-        print(f"Dry run - Data validation successful:")
-        print(f"  Diagnoses: {n_diagnoses} records")
-        print(f"  Notes: {n_notes} records")
-        print(f"  Diagnoses columns: {list(diagnoses_df.columns)}")
-        print(f"  Notes columns: {list(notes_df.columns)}")
+        logger.info(f"Dry run - Data validation successful:")
+        logger.info(f"  Diagnoses: {n_diagnoses} records")
+        logger.info(f"  Notes: {n_notes} records")
+        logger.info(f"  Diagnoses columns: {list(diagnoses_df.columns)}")
+        logger.info(f"  Notes columns: {list(notes_df.columns)}")
         # Return empty datasets for dry run
         empty_dataset = MedicalRecordDataset([], [], [])
         return empty_dataset, empty_dataset, empty_dataset, MedicalDataPreprocessor(max_symptom_length=max_symptom_length)

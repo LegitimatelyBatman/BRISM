@@ -6,7 +6,7 @@ mapping between symptoms and ICD codes with uncertainty quantification.
 """
 
 from .model import BRISM, BRISMConfig
-from .train import train_brism, EarlyStopping, ModelCheckpoint, load_checkpoint
+from .train import train_brism, EarlyStopping, ModelCheckpoint, load_checkpoint, configure_logging
 from .inference import diagnose_with_confidence, generate_symptoms_beam_search
 from .loss import BRISMLoss, FocalLoss, compute_class_weights
 from .icd_hierarchy import ICDHierarchy
@@ -66,6 +66,7 @@ __all__ = [
     "EarlyStopping",
     "ModelCheckpoint",
     "load_checkpoint",
+    "configure_logging",
     "diagnose_with_confidence",
     "generate_symptoms_beam_search",
     "BRISMLoss",

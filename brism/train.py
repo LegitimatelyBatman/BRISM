@@ -4,11 +4,15 @@ Training functions for BRISM model with alternating batch training.
 
 import torch
 import os
+import logging
 from torch.utils.data import DataLoader
 from typing import Optional, Callable, Dict
 from pathlib import Path
 from .model import BRISM
 from .loss import BRISMLoss
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class EarlyStopping:
@@ -43,14 +47,14 @@ class EarlyStopping:
         elif val_loss > self.best_loss - self.min_delta:
             self.counter += 1
             if self.verbose:
-                print(f"EarlyStopping counter: {self.counter} out of {self.patience}")
+                logger.info(f"EarlyStopping counter: {self.counter} out of {self.patience}")
             if self.counter >= self.patience:
                 self.early_stop = True
                 if self.verbose:
-                    print("Early stopping triggered")
+                    logger.info("Early stopping triggered")
         else:
             if self.verbose and val_loss < self.best_loss:
-                print(f"Validation loss improved: {self.best_loss:.4f} -> {val_loss:.4f}")
+                logger.info(f"Validation loss improved: {self.best_loss:.4f} -> {val_loss:.4f}")
             self.best_loss = val_loss
             self.counter = 0
         
@@ -127,12 +131,12 @@ class ModelCheckpoint:
             path = self.checkpoint_dir / 'best_model.pt'
             torch.save(checkpoint, path)
             if self.verbose:
-                print(f"Saved best model to {path}")
+                logger.info(f"Saved best model to {path}")
         else:
             path = self.checkpoint_dir / f'checkpoint_epoch_{epoch}.pt'
             torch.save(checkpoint, path)
             if self.verbose:
-                print(f"Saved checkpoint to {path}")
+                logger.debug(f"Saved checkpoint to {path}")
         
         # Also save latest checkpoint
         latest_path = self.checkpoint_dir / 'latest_checkpoint.pt'
@@ -158,7 +162,7 @@ class ModelCheckpoint:
         
         if metric_value is None:
             if self.verbose:
-                print(f"Warning: Monitored metric '{self.monitor}' not found in metrics")
+                logger.warning(f"Monitored metric '{self.monitor}' not found in metrics")
             return
         
         # Check if this is the best model
@@ -219,7 +223,7 @@ def load_checkpoint(checkpoint_path: str,
     if 'version' in checkpoint:
         checkpoint_version = checkpoint['version']
         # Simple version warning (can be extended)
-        print(f"Loading checkpoint from version: {checkpoint_version}")
+        logger.info(f"Loading checkpoint from version: {checkpoint_version}")
         # Could add compatibility checks here
     
     # Validate model architecture compatibility
@@ -281,9 +285,9 @@ def load_checkpoint(checkpoint_path: str,
             "\n".join(shape_mismatches)
         )
     elif shape_mismatches:
-        print("Warning: Shape mismatches found (loading in non-strict mode):")
+        logger.warning("Shape mismatches found (loading in non-strict mode):")
         for mismatch in shape_mismatches:
-            print(f"  {mismatch}")
+            logger.warning(f"  {mismatch}")
     
     # Load model state
     try:
@@ -297,16 +301,16 @@ def load_checkpoint(checkpoint_path: str,
             try:
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
             except Exception as e:
-                print(f"Warning: Failed to load optimizer state: {e}")
+                logger.warning(f"Failed to load optimizer state: {e}")
         
         if scheduler is not None and 'scheduler_state_dict' in checkpoint:
             try:
                 scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             except Exception as e:
-                print(f"Warning: Failed to load scheduler state: {e}")
+                logger.warning(f"Failed to load scheduler state: {e}")
     
-    print(f"Successfully loaded checkpoint from epoch {checkpoint['epoch']}")
-    print(f"Metrics: {checkpoint.get('metrics', {})}")
+    logger.info(f"Successfully loaded checkpoint from epoch {checkpoint['epoch']}")
+    logger.info(f"Metrics: {checkpoint.get('metrics', {})}")
     
     return checkpoint
 
@@ -437,13 +441,13 @@ def train_brism(
             # Logging
             if global_step % log_interval == 0:
                 avg_loss = sum(epoch_losses[-log_interval:]) / min(log_interval, len(epoch_losses))
-                print(f"Epoch {epoch+1}/{num_epochs}, Step {global_step}, Loss: {avg_loss:.4f}")
+                logger.info(f"Epoch {epoch+1}/{num_epochs}, Step {global_step}, Loss: {avg_loss:.4f}")
                 
                 # Log memory usage on GPU
                 if torch.cuda.is_available():
                     memory_allocated = torch.cuda.memory_allocated(device) / 1024**3  # GB
                     memory_reserved = torch.cuda.memory_reserved(device) / 1024**3  # GB
-                    print(f"  GPU Memory: {memory_allocated:.2f}GB allocated, {memory_reserved:.2f}GB reserved")
+                    logger.debug(f"GPU Memory: {memory_allocated:.2f}GB allocated, {memory_reserved:.2f}GB reserved")
                 
                 if callback:
                     callback_metrics = {'loss': avg_loss}
@@ -460,20 +464,20 @@ def train_brism(
         epoch_avg_metrics = {k: sum(v) / len(v) for k, v in epoch_metrics.items()}
         history['epoch_metrics'].append(epoch_avg_metrics)
         
-        print(f"\nEpoch {epoch+1}/{num_epochs} - Average Loss: {avg_epoch_loss:.4f}")
+        logger.info(f"\nEpoch {epoch+1}/{num_epochs} - Average Loss: {avg_epoch_loss:.4f}")
         for key, val in epoch_avg_metrics.items():
-            print(f"  {key}: {val:.4f}")
+            logger.info(f"  {key}: {val:.4f}")
         
         # Validation
         if val_loader is not None:
             val_loss = evaluate_brism(model, val_loader, loss_fn, device)
             history['val_loss'].append(val_loss)
-            print(f"  Validation Loss: {val_loss:.4f}")
+            logger.info(f"  Validation Loss: {val_loss:.4f}")
             
             # Check early stopping
             if early_stopping is not None:
                 if early_stopping(val_loss):
-                    print(f"Early stopping at epoch {epoch+1}")
+                    logger.info(f"Early stopping at epoch {epoch+1}")
                     break
         
         # Save checkpoint
@@ -491,8 +495,6 @@ def train_brism(
         
         # Clean up after epoch
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
-        
-        print()
     
     return history
 
@@ -594,3 +596,32 @@ def train_epoch_simple(
     avg_loss = total_loss / num_batches
     
     return {'loss': avg_loss}
+
+
+def configure_logging(level: str = 'INFO', log_file: Optional[str] = None):
+    """
+    Configure logging for BRISM training.
+    
+    Args:
+        level: Logging level ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+        log_file: Optional file to write logs to (in addition to console)
+    """
+    log_level = getattr(logging, level.upper(), logging.INFO)
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Add file handler if specified
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(log_level)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(file_handler)
+    
+    logger.info(f"Logging configured at {level} level")
+
