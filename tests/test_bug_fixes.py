@@ -88,13 +88,30 @@ class TestLossComponentBugFixes(unittest.TestCase):
     def test_contrastive_loss_batch_size_one(self):
         """Test that contrastive loss returns zero for batch_size < 2."""
         loss_fn = BRISMLoss(contrastive_weight=0.5)
-        
+
         # Batch size of 1
         latents = torch.randn(1, 32)
         labels = torch.tensor([5])
-        
+
         loss = loss_fn.contrastive_loss_infonce(latents, labels)
         self.assertEqual(loss.item(), 0.0, "Contrastive loss should be zero for batch_size=1")
+
+    def test_contrastive_loss_infonce_numerical_stability(self):
+        """Contrastive InfoNCE loss should remain finite for tiny temperatures."""
+        loss_fn = BRISMLoss(contrastive_weight=0.5, contrastive_temperature=1e-6)
+
+        # Two identical samples for the positive pair and one negative sample. The
+        # tiny temperature produces extremely large similarities that previously
+        # caused overflow (inf/inf) during the exp/sum computation.
+        latents = torch.tensor([
+            [10.0, 10.0],
+            [10.0, 10.0],
+            [1.0, 0.0],
+        ])
+        labels = torch.tensor([0, 0, 1])
+
+        loss = loss_fn.contrastive_loss_infonce(latents, labels)
+        self.assertTrue(torch.isfinite(loss), "Loss should not overflow or be NaN")
 
 
 class TestModelBugFixes(unittest.TestCase):

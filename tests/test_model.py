@@ -93,12 +93,41 @@ class TestBRISMModel(unittest.TestCase):
             0, self.config.symptom_vocab_size,
             (self.batch_size, self.config.max_symptom_length)
         )
-        
+
         icd_logits, mu, logvar = self.model.forward_path(symptoms)
-        
+
         self.assertEqual(icd_logits.shape, (self.batch_size, self.config.icd_vocab_size))
         self.assertEqual(mu.shape, (self.batch_size, self.config.latent_dim))
         self.assertEqual(logvar.shape, (self.batch_size, self.config.latent_dim))
+
+    def test_forward_method(self):
+        """The module forward should mirror forward_path outputs."""
+        symptoms = torch.randint(
+            0, self.config.symptom_vocab_size,
+            (self.batch_size, self.config.max_symptom_length)
+        )
+        timestamps = torch.rand(self.batch_size, self.config.max_symptom_length)
+
+        self.model.eval()
+        torch.manual_seed(42)
+        probs, latent = self.model(symptoms, timestamps=timestamps)
+
+        self.assertEqual(probs.shape, (self.batch_size, self.config.icd_vocab_size))
+        self.assertEqual(latent.shape, (self.batch_size, self.config.latent_dim))
+
+        # Probabilities should sum to one per sample
+        torch.testing.assert_close(
+            probs.sum(dim=1),
+            torch.ones(self.batch_size),
+            atol=1e-5,
+            rtol=1e-5,
+        )
+
+        # Forward method should match softmax(logits) and latent mean from forward_path
+        torch.manual_seed(42)
+        icd_logits, mu, _ = self.model.forward_path(symptoms, timestamps)
+        torch.testing.assert_close(probs, torch.softmax(icd_logits, dim=-1))
+        torch.testing.assert_close(latent, mu)
         
     def test_reverse_path(self):
         """Test reverse path: ICD -> symptoms."""
