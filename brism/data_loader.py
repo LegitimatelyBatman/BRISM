@@ -69,9 +69,16 @@ class ICDNormalizer:
             
         Returns:
             Normalized ICD-10-CM code
+            
+        Raises:
+            ValueError: If icd10_code is empty or whitespace-only
         """
         # Remove whitespace
         code = icd10_code.strip().upper()
+        
+        # Validate not empty
+        if not code:
+            raise ValueError("ICD-10 code cannot be empty or whitespace-only")
         
         # Add dot if missing and code is long enough
         if '.' not in code and len(code) > 3:
@@ -231,10 +238,14 @@ class MedicalDataPreprocessor:
             icd_code: ICD-10 code
             
         Returns:
-            ICD index or None if not in vocabulary
+            ICD index or None if not in vocabulary or invalid
         """
-        # Normalize code
-        normalized = self.normalizer.normalize_icd10(icd_code)
+        try:
+            # Normalize code (may raise ValueError if empty)
+            normalized = self.normalizer.normalize_icd10(icd_code)
+        except ValueError:
+            # Invalid or empty ICD code
+            return None
         
         # Get index
         return self.icd_vocab.get(normalized, None)

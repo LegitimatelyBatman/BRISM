@@ -96,16 +96,25 @@ class SymptomNormalizer:
             preserve_case: If True, preserve original case when returning normalized text
             
         Returns:
-            Normalized canonical form
+            Normalized canonical form (empty string if input is empty or whitespace-only)
         """
         # Store original for case preservation
         original_text = symptom_text.strip()
+        
+        # Handle empty string early
+        if not original_text:
+            return ""
         
         # Convert to lowercase for matching
         text = symptom_text.lower().strip()
         
         # Remove special characters except spaces and hyphens
         text = re.sub(r'[^\w\s\-/]', ' ', text)
+        
+        # After cleaning, check if empty again
+        text = text.strip()
+        if not text:
+            return ""
         
         # Check direct synonym match
         if text in self.synonym_dict:
