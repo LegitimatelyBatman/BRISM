@@ -149,7 +149,7 @@ class BRISMLoss(nn.Module):
         self.use_focal_loss = use_focal_loss
         
         if use_focal_loss:
-            self.focal_loss = FocalLoss(alpha=class_weights, gamma=focal_gamma)
+            self.focal_loss = FocalLoss(alpha=class_weights, gamma=focal_gamma, reduction='none')
         else:
             self.focal_loss = None
         
@@ -183,10 +183,6 @@ class BRISMLoss(nn.Module):
         # Use focal loss if enabled
         if self.use_focal_loss:
             loss = self.focal_loss(logits, target)
-            if isinstance(loss, torch.Tensor) and loss.dim() == 0:
-                # Focal loss with reduction='mean' returns scalar
-                # Convert to batch-wise for consistency
-                loss = loss.unsqueeze(0).expand(target.size(0))
         else:
             # Standard cross-entropy with class weights
             if self.class_weights is not None:

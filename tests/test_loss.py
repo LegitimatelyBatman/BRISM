@@ -271,8 +271,9 @@ class TestClassWeights(unittest.TestCase):
         
         loss = loss_fn.reconstruction_loss_icd(logits, target)
         
-        # Focal loss may return scalar or batch-wise
-        self.assertTrue(loss.numel() >= 1)
+        # Focal loss should return batch-wise loss
+        self.assertEqual(loss.shape, (4,))
+        self.assertTrue((loss >= 0).all())
 
 
 if __name__ == '__main__':
