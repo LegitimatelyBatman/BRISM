@@ -148,6 +148,9 @@ class IntegratedGradients:
         # Sum over embedding dimension to get per-token attribution
         attributions = integrated_grads.sum(dim=-1)
         
+        # Clean up gradients to prevent memory leaks
+        self.model.zero_grad()
+        
         if squeeze_output:
             attributions = attributions.squeeze(0)
         
@@ -247,6 +250,8 @@ class AttentionVisualization:
         # Get symptom embeddings with gradients
         symptom_embeds = self.model.symptom_embedding(symptoms)
         symptom_embeds.requires_grad_(True)
+        # Retain gradients for non-leaf tensor
+        symptom_embeds.retain_grad()
         
         # Forward pass with temporal encoding (always enabled)
         symptom_embeds_temporal = self.model.temporal_encoding(symptom_embeds, timestamps)
@@ -270,6 +275,9 @@ class AttentionVisualization:
         
         # Get gradient magnitude
         importance = symptom_embeds.grad.abs().sum(dim=-1)
+        
+        # Clean up gradients
+        self.model.zero_grad()
         
         if squeeze_output:
             importance = importance.squeeze(0)
