@@ -5,8 +5,108 @@ Loss functions for BRISM training.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict
 from .icd_hierarchy import ICDHierarchy, compute_hierarchical_loss
+
+
+def compute_class_weights(
+    class_counts: Dict[int, int],
+    num_classes: int,
+    smoothing: float = 1.0
+) -> torch.Tensor:
+    """
+    Compute inverse frequency weights for class balancing.
+    
+    Args:
+        class_counts: Dictionary mapping class index to count
+        num_classes: Total number of classes
+        smoothing: Smoothing factor to avoid extreme weights
+        
+    Returns:
+        Class weights tensor [num_classes]
+    """
+    # Initialize all weights to smoothing value
+    weights = torch.ones(num_classes) * smoothing
+    
+    # Compute total samples
+    total_samples = sum(class_counts.values())
+    
+    # Compute inverse frequency weights
+    for class_idx, count in class_counts.items():
+        if count > 0:
+            weights[class_idx] = total_samples / (num_classes * count)
+    
+    # Normalize weights to have mean of 1.0
+    weights = weights / weights.mean()
+    
+    return weights
+
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss for addressing class imbalance.
+    
+    FL(p_t) = -alpha_t * (1 - p_t)^gamma * log(p_t)
+    
+    Focuses training on hard examples and down-weights easy examples.
+    """
+    
+    def __init__(
+        self,
+        alpha: Optional[torch.Tensor] = None,
+        gamma: float = 2.0,
+        reduction: str = 'mean'
+    ):
+        """
+        Args:
+            alpha: Class weights [num_classes] or None
+            gamma: Focusing parameter (0 = cross-entropy, higher = more focus on hard examples)
+            reduction: 'mean', 'sum', or 'none'
+        """
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+    
+    def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        """
+        Compute focal loss.
+        
+        Args:
+            logits: Model predictions [batch_size, num_classes]
+            targets: Ground truth labels [batch_size]
+            
+        Returns:
+            Loss value
+        """
+        # Compute probabilities
+        probs = F.softmax(logits, dim=-1)
+        
+        # Get probability of true class
+        batch_size = targets.size(0)
+        p_t = probs[torch.arange(batch_size), targets]
+        
+        # Compute focal term
+        focal_term = (1 - p_t) ** self.gamma
+        
+        # Compute cross-entropy
+        ce = F.cross_entropy(logits, targets, reduction='none')
+        
+        # Apply focal term
+        loss = focal_term * ce
+        
+        # Apply class weights if provided
+        if self.alpha is not None:
+            alpha_t = self.alpha[targets]
+            loss = alpha_t * loss
+        
+        # Apply reduction
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        else:
+            return loss
 
 
 class BRISMLoss(nn.Module):
@@ -15,12 +115,16 @@ class BRISMLoss(nn.Module):
     1. Reconstruction loss (VAE-style)
     2. KL divergence on latent distributions
     3. Cycle consistency loss
+    4. Optional focal loss for class imbalance
     """
     
     def __init__(self, kl_weight: float = 0.1, cycle_weight: float = 1.0,
                  icd_hierarchy: Optional[ICDHierarchy] = None, 
                  hierarchical_weight: float = 0.5,
-                 hierarchical_temperature: float = 1.0):
+                 hierarchical_temperature: float = 1.0,
+                 class_weights: Optional[torch.Tensor] = None,
+                 use_focal_loss: bool = False,
+                 focal_gamma: float = 2.0):
         """
         Args:
             kl_weight: Weight for KL divergence term
@@ -28,6 +132,9 @@ class BRISMLoss(nn.Module):
             icd_hierarchy: Optional ICD hierarchy for hierarchical loss
             hierarchical_weight: Weight for hierarchical loss component (0-1)
             hierarchical_temperature: Temperature for hierarchical distance penalty
+            class_weights: Optional class weights for imbalanced data [icd_vocab_size]
+            use_focal_loss: Use focal loss instead of standard cross-entropy
+            focal_gamma: Gamma parameter for focal loss
         """
         super().__init__()
         self.kl_weight = kl_weight
@@ -36,6 +143,15 @@ class BRISMLoss(nn.Module):
         self.hierarchical_weight = hierarchical_weight
         self.hierarchical_temperature = hierarchical_temperature
         self._distance_matrix = None
+        
+        # Class balancing
+        self.register_buffer('class_weights', class_weights)
+        self.use_focal_loss = use_focal_loss
+        
+        if use_focal_loss:
+            self.focal_loss = FocalLoss(alpha=class_weights, gamma=focal_gamma)
+        else:
+            self.focal_loss = None
         
     def kl_divergence(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -55,7 +171,7 @@ class BRISMLoss(nn.Module):
     
     def reconstruction_loss_icd(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
-        Reconstruction loss for ICD predictions (cross-entropy with optional hierarchical loss).
+        Reconstruction loss for ICD predictions with optional class weighting and focal loss.
         
         Args:
             logits: Predicted logits [batch_size, icd_vocab_size]
@@ -64,8 +180,19 @@ class BRISMLoss(nn.Module):
         Returns:
             Loss [batch_size]
         """
-        # Standard cross-entropy loss
-        ce_loss = F.cross_entropy(logits, target, reduction='none')
+        # Use focal loss if enabled
+        if self.use_focal_loss:
+            loss = self.focal_loss(logits, target)
+            if isinstance(loss, torch.Tensor) and loss.dim() == 0:
+                # Focal loss with reduction='mean' returns scalar
+                # Convert to batch-wise for consistency
+                loss = loss.unsqueeze(0).expand(target.size(0))
+        else:
+            # Standard cross-entropy with class weights
+            if self.class_weights is not None:
+                loss = F.cross_entropy(logits, target, weight=self.class_weights, reduction='none')
+            else:
+                loss = F.cross_entropy(logits, target, reduction='none')
         
         # Add hierarchical loss if hierarchy is provided
         if self.icd_hierarchy is not None and self.hierarchical_weight > 0:
@@ -80,10 +207,10 @@ class BRISMLoss(nn.Module):
             )
             
             # Combine losses
-            total_loss = (1 - self.hierarchical_weight) * ce_loss + self.hierarchical_weight * hier_loss
+            total_loss = (1 - self.hierarchical_weight) * loss + self.hierarchical_weight * hier_loss
             return total_loss
         
-        return ce_loss
+        return loss
     
     def reconstruction_loss_symptoms(self, logits: torch.Tensor, target: torch.Tensor, 
                                     pad_idx: int = 0) -> torch.Tensor:
