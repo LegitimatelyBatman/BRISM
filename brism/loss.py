@@ -217,6 +217,10 @@ class BRISMLoss(nn.Module):
         hierarchical_weight = hierarchical_scale * min(1.0, 500.0 / (vocab_size_ratio * 500.0))
         hierarchical_weight = max(0.1, min(hierarchical_weight, 0.5))
         
+        # Adjust hierarchical weight based on vocabulary size ratio
+        # Larger vocabularies (higher ratio) need proportionally different weighting
+        hierarchical_weight = hierarchical_weight * (1.0 / max(1.0, vocab_size_ratio ** 0.5))
+        
         # Contrastive loss should be smaller than reconstruction
         # Goal: contrastive term should be ~20-50% of reconstruction term
         contrastive_weight = (recon_scale * 0.35) / max(contrastive_scale, 1e-6)
@@ -262,6 +266,14 @@ class BRISMLoss(nn.Module):
         
         # Check if device matches
         if self._distance_matrix.device != device:
+            # Warn about device change - repeatedly moving large matrices is expensive
+            import warnings
+            warnings.warn(
+                f"Distance matrix device changed from {self._distance_matrix.device} to {device}. "
+                f"Repeatedly moving large matrices between devices can significantly impact performance. "
+                f"Consider keeping the model and data on the same device throughout training.",
+                UserWarning
+            )
             # Recreate on correct device
             self._distance_matrix = self.icd_hierarchy.get_distance_tensor(device=device)
         
@@ -448,6 +460,12 @@ class BRISMLoss(nn.Module):
         batch_size = latents.size(0)
         
         if batch_size < 2:
+            return torch.tensor(0.0, device=latents.device)
+        
+        # Check if all samples have the same label
+        # If yes, there are no negative pairs and contrastive loss is undefined
+        unique_labels = torch.unique(labels)
+        if len(unique_labels) == 1:
             return torch.tensor(0.0, device=latents.device)
         
         # Normalize latents

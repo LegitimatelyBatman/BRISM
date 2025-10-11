@@ -51,6 +51,13 @@ class BRISMEnsemble:
             else:
                 raise ValueError("Must provide either models or config for pseudo-ensemble")
             
+            # Validate minimum n_models for meaningful uncertainty estimates
+            if n_models < 2:
+                raise ValueError(
+                    f"Pseudo-ensemble requires n_models >= 2 for meaningful uncertainty estimates, "
+                    f"got n_models={n_models}. With n_models=1, standard deviation will always be zero."
+                )
+            
             self.models = None
             self.n_models = n_models
         else:

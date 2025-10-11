@@ -300,6 +300,16 @@ class SequenceDecoder(nn.Module):
         # Safety check for maximum length
         search_max_length = min(max_length or self.max_length, self.max_length * 2)  # Cap at 2x model max
         
+        # Validate beam_width * max_length to prevent OOM errors
+        # Each beam stores sequences of length max_length
+        total_candidates = beam_width * search_max_length
+        if total_candidates > 10000:
+            raise ValueError(
+                f"Beam search memory requirements too large: beam_width ({beam_width}) * "
+                f"max_length ({search_max_length}) = {total_candidates} exceeds limit of 10000. "
+                f"Reduce beam_width or max_length to avoid out-of-memory errors."
+            )
+        
         # Initialize hidden state from latent
         h0 = self.latent_to_hidden(z).unsqueeze(0)
         c0 = torch.zeros_like(h0)
