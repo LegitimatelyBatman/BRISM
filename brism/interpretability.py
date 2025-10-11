@@ -89,17 +89,12 @@ class IntegratedGradients:
             step_embeds = path_embeds[step * batch_size:(step + 1) * batch_size]
             step_embeds = step_embeds.detach().requires_grad_(True)
             
-            # Apply temporal encoding if enabled
-            if self.model.use_temporal:
-                step_embeds = self.model.temporal_encoding(step_embeds, None)
+            # Apply temporal encoding (always enabled)
+            step_embeds = self.model.temporal_encoding(step_embeds, None)
             
-            # Aggregate symptoms
-            if self.model.config.use_attention:
-                mask = (symptoms != 0).float()
-                aggregated, _ = self.model.symptom_attention(step_embeds, mask)
-            else:
-                mask = (symptoms != 0).float().unsqueeze(-1)
-                aggregated = (step_embeds * mask).sum(dim=1) / (mask.sum(dim=1) + 1e-8)
+            # Aggregate symptoms with attention (always enabled)
+            mask = (symptoms != 0).float()
+            aggregated, _ = self.model.symptom_attention(step_embeds, mask)
             
             # Encode to latent
             mu, logvar = self.model.symptom_encoder(aggregated)
@@ -156,8 +151,6 @@ class AttentionVisualization:
             model: BRISM model with attention mechanism
         """
         self.model = model
-        if not model.config.use_attention:
-            raise ValueError("Model must use attention mechanism for attention visualization")
     
     def get_attention_weights(
         self,
@@ -188,9 +181,8 @@ class AttentionVisualization:
             # Embed symptoms
             symptom_embeds = self.model.symptom_embedding(symptoms)
             
-            # Apply temporal encoding if enabled
-            if self.model.use_temporal and timestamps is not None:
-                symptom_embeds = self.model.temporal_encoding(symptom_embeds, timestamps)
+            # Apply temporal encoding (always enabled)
+            symptom_embeds = self.model.temporal_encoding(symptom_embeds, timestamps)
             
             # Get attention weights
             mask = (symptoms != 0).float()
@@ -238,11 +230,8 @@ class AttentionVisualization:
         symptom_embeds = self.model.symptom_embedding(symptoms)
         symptom_embeds.requires_grad_(True)
         
-        # Forward pass
-        if self.model.use_temporal and timestamps is not None:
-            symptom_embeds_temporal = self.model.temporal_encoding(symptom_embeds, timestamps)
-        else:
-            symptom_embeds_temporal = symptom_embeds
+        # Forward pass with temporal encoding (always enabled)
+        symptom_embeds_temporal = self.model.temporal_encoding(symptom_embeds, timestamps)
         
         mask = (symptoms != 0).float()
         aggregated, _ = self.model.symptom_attention(symptom_embeds_temporal, mask)
@@ -444,8 +433,6 @@ class AttentionRollout:
             model: BRISM model with attention mechanism
         """
         self.model = model
-        if not model.config.use_attention:
-            raise ValueError("Model must use attention mechanism for attention rollout")
     
     def compute_rollout(
         self,
@@ -511,8 +498,8 @@ def explain_prediction(
         for icd, prob in zip(top_k_icds, top_k_probs)
     ]
     
-    # Attention-based explanation
-    if method in ['attention', 'all'] and model.config.use_attention:
+    # Attention-based explanation (always available)
+    if method in ['attention', 'all']:
         vis = AttentionVisualization(model)
         attention_weights, _ = vis.get_attention_weights(symptoms)
         

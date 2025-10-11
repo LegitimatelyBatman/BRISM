@@ -112,21 +112,20 @@ class FocalLoss(nn.Module):
 class BRISMLoss(nn.Module):
     """
     Combined loss for BRISM model including:
-    1. Reconstruction loss (VAE-style)
+    1. Reconstruction loss (VAE-style) with focal loss
     2. KL divergence on latent distributions
     3. Cycle consistency loss
-    4. Optional focal loss for class imbalance
-    5. Optional contrastive loss for better latent space
+    4. Hierarchical ICD loss (mandatory)
+    5. Contrastive loss for better latent space (mandatory)
     """
     
     def __init__(self, kl_weight: float = 0.1, cycle_weight: float = 1.0,
                  icd_hierarchy: Optional[ICDHierarchy] = None, 
-                 hierarchical_weight: float = 0.5,
+                 hierarchical_weight: float = 0.3,
                  hierarchical_temperature: float = 1.0,
                  class_weights: Optional[torch.Tensor] = None,
-                 use_focal_loss: bool = False,
                  focal_gamma: float = 2.0,
-                 contrastive_weight: float = 0.0,
+                 contrastive_weight: float = 0.5,
                  contrastive_margin: float = 1.0,
                  contrastive_temperature: float = 0.5):
         """
@@ -134,12 +133,11 @@ class BRISMLoss(nn.Module):
             kl_weight: Weight for KL divergence term
             cycle_weight: Weight for cycle consistency term
             icd_hierarchy: Optional ICD hierarchy for hierarchical loss
-            hierarchical_weight: Weight for hierarchical loss component (0-1)
+            hierarchical_weight: Weight for hierarchical loss component (default 0.3)
             hierarchical_temperature: Temperature for hierarchical distance penalty
             class_weights: Optional class weights for imbalanced data [icd_vocab_size]
-            use_focal_loss: Use focal loss instead of standard cross-entropy
-            focal_gamma: Gamma parameter for focal loss
-            contrastive_weight: Weight for contrastive loss term
+            focal_gamma: Gamma parameter for focal loss (always enabled)
+            contrastive_weight: Weight for contrastive loss term (default 0.5)
             contrastive_margin: Margin for triplet loss
             contrastive_temperature: Temperature for contrastive loss
         """
@@ -151,16 +149,11 @@ class BRISMLoss(nn.Module):
         self.hierarchical_temperature = hierarchical_temperature
         self._distance_matrix = None
         
-        # Class balancing
+        # Focal loss (always enabled)
         self.register_buffer('class_weights', class_weights)
-        self.use_focal_loss = use_focal_loss
+        self.focal_loss = FocalLoss(alpha=class_weights, gamma=focal_gamma, reduction='none')
         
-        if use_focal_loss:
-            self.focal_loss = FocalLoss(alpha=class_weights, gamma=focal_gamma, reduction='none')
-        else:
-            self.focal_loss = None
-        
-        # Contrastive learning
+        # Contrastive learning (always enabled)
         self.contrastive_weight = contrastive_weight
         self.contrastive_margin = contrastive_margin
         self.contrastive_temperature = contrastive_temperature
@@ -192,15 +185,8 @@ class BRISMLoss(nn.Module):
         Returns:
             Loss [batch_size]
         """
-        # Use focal loss if enabled
-        if self.use_focal_loss:
-            loss = self.focal_loss(logits, target)
-        else:
-            # Standard cross-entropy with class weights
-            if self.class_weights is not None:
-                loss = F.cross_entropy(logits, target, weight=self.class_weights, reduction='none')
-            else:
-                loss = F.cross_entropy(logits, target, reduction='none')
+        # Use focal loss (always enabled)
+        loss = self.focal_loss(logits, target)
         
         # Add hierarchical loss if hierarchy is provided
         if self.icd_hierarchy is not None and self.hierarchical_weight > 0:

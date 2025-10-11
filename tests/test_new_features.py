@@ -31,7 +31,6 @@ class TestInterpretability(unittest.TestCase):
         self.config = BRISMConfig(
             symptom_vocab_size=50,
             icd_vocab_size=20,
-            use_attention=True,
             latent_dim=16,
             max_symptom_length=10
         )

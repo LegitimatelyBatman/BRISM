@@ -12,8 +12,11 @@ from dataclasses import dataclass
 @dataclass
 class BRISMConfig:
     """Configuration for BRISM model."""
+    # Required parameters
     symptom_vocab_size: int = 1000
     icd_vocab_size: int = 500
+    
+    # Architecture parameters
     symptom_embed_dim: int = 128
     icd_embed_dim: int = 128
     encoder_hidden_dim: int = 256
@@ -22,12 +25,14 @@ class BRISMConfig:
     max_symptom_length: int = 50
     dropout_rate: float = 0.2
     mc_samples: int = 20  # Monte Carlo dropout samples for uncertainty
-    use_attention: bool = True  # Use attention for symptom aggregation
-    # Temporal encoding settings
-    use_temporal_encoding: bool = False  # Enable temporal encoding for symptoms
+    
+    # Temporal encoding settings (always enabled)
     temporal_encoding_type: str = 'positional'  # 'positional' or 'timestamp'
-    # Temperature scaling for calibration
+    
+    # Advanced feature hyperparameters
     temperature: float = 1.0  # Temperature parameter for probability calibration
+    beam_width: int = 5  # For beam search generation
+    n_ensemble_models: int = 5  # For pseudo-ensemble
 
 
 class Encoder(nn.Module):
@@ -358,22 +363,17 @@ class BRISM(nn.Module):
         self.symptom_embedding = nn.Embedding(config.symptom_vocab_size, config.symptom_embed_dim)
         self.icd_embedding = nn.Embedding(config.icd_vocab_size, config.icd_embed_dim)
         
-        # Temporal encoding (optional)
-        self.use_temporal = config.use_temporal_encoding
-        if config.use_temporal_encoding:
-            from .temporal import TemporalEncoding
-            self.temporal_encoding = TemporalEncoding(
-                embed_dim=config.symptom_embed_dim,
-                max_length=config.max_symptom_length,
-                encoding_type=config.temporal_encoding_type,
-                dropout=config.dropout_rate
-            )
+        # Temporal encoding (always enabled)
+        from .temporal import TemporalEncoding
+        self.temporal_encoding = TemporalEncoding(
+            embed_dim=config.symptom_embed_dim,
+            max_length=config.max_symptom_length,
+            encoding_type=config.temporal_encoding_type,
+            dropout=config.dropout_rate
+        )
         
-        # Symptom aggregation (attention or mean pooling)
-        if config.use_attention:
-            self.symptom_attention = AttentionAggregator(config.symptom_embed_dim, config.dropout_rate)
-        else:
-            self.symptom_attention = None
+        # Symptom aggregation with attention (always enabled)
+        self.symptom_attention = AttentionAggregator(config.symptom_embed_dim, config.dropout_rate)
         
         # Forward path: symptoms -> ICD
         self.symptom_encoder = Encoder(
@@ -435,18 +435,12 @@ class BRISM(nn.Module):
         # Embed symptoms
         symptom_embeds = self.symptom_embedding(symptoms)  # [B, L, D]
         
-        # Add temporal encoding if enabled
-        if self.use_temporal:
-            symptom_embeds = self.temporal_encoding(symptom_embeds, timestamps)
+        # Apply temporal encoding (always enabled)
+        symptom_embeds = self.temporal_encoding(symptom_embeds, timestamps)
         
-        # Aggregate symptoms with attention or mean pooling
-        if self.config.use_attention:
-            # Create mask for non-zero tokens (assuming 0 is padding)
-            mask = (symptoms != 0).float()  # [B, L]
-            symptom_repr, _ = self.symptom_attention(symptom_embeds, mask)  # [B, D]
-        else:
-            # Mean pooling (original behavior)
-            symptom_repr = symptom_embeds.mean(dim=1)  # [B, D]
+        # Aggregate symptoms with attention (always enabled)
+        mask = (symptoms != 0).float()  # [B, L]
+        symptom_repr, _ = self.symptom_attention(symptom_embeds, mask)  # [B, D]
         
         # Encode to latent
         mu, logvar = self.symptom_encoder(symptom_repr)
