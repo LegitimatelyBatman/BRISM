@@ -6,6 +6,9 @@ ensemble, symptom normalization, and active learning.
 import unittest
 import torch
 import numpy as np
+import time
+import warnings
+from functools import wraps
 
 from brism import (
     BRISM, BRISMConfig,
@@ -21,6 +24,34 @@ from brism import (
     create_default_medical_synonyms,
     ActiveLearner,
 )
+
+
+def time_test(threshold_seconds=2.0):
+    """
+    Decorator to monitor test execution time and warn if threshold exceeded.
+    
+    Args:
+        threshold_seconds: Time threshold in seconds. If test exceeds this,
+                          a warning is logged.
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start_time = time.time()
+            result = func(*args, **kwargs)
+            elapsed_time = time.time() - start_time
+            
+            if elapsed_time > threshold_seconds:
+                warnings.warn(
+                    f"Test {func.__name__} took {elapsed_time:.2f}s, "
+                    f"exceeding threshold of {threshold_seconds}s. "
+                    f"This may indicate a performance regression.",
+                    RuntimeWarning
+                )
+            
+            return result
+        return wrapper
+    return decorator
 
 
 class TestInterpretability(unittest.TestCase):
@@ -46,6 +77,7 @@ class TestInterpretability(unittest.TestCase):
         self.assertAlmostEqual(attention_weights.sum().item(), 1.0, places=5)
         self.assertEqual(predictions.shape, (self.config.icd_vocab_size,))
     
+    @time_test(threshold_seconds=1.5)
     def test_integrated_gradients(self):
         """Test integrated gradients."""
         ig = IntegratedGradients(self.model)
@@ -55,6 +87,7 @@ class TestInterpretability(unittest.TestCase):
         # Check that non-zero symptoms have attributions
         self.assertTrue(attributions[:4].abs().sum() > 0)
     
+    @time_test(threshold_seconds=1.5)
     def test_counterfactual_explanations(self):
         """Test counterfactual explanations."""
         cf = CounterfactualExplanations(self.model)
@@ -70,6 +103,7 @@ class TestInterpretability(unittest.TestCase):
             self.assertIn('probability_drop', exp)
             self.assertIn('probability_drop_percentage', exp)
     
+    @time_test(threshold_seconds=2.0)
     def test_explain_prediction(self):
         """Test comprehensive explanation."""
         explanation = explain_prediction(
@@ -238,6 +272,7 @@ class TestEnsemble(unittest.TestCase):
         self.assertFalse(ensemble.use_pseudo_ensemble)
         self.assertEqual(ensemble.n_models, 3)
     
+    @time_test(threshold_seconds=1.5)
     def test_ensemble_prediction(self):
         """Test ensemble prediction."""
         ensemble = BRISMEnsemble(
@@ -257,6 +292,7 @@ class TestEnsemble(unittest.TestCase):
         self.assertIn('aleatoric', uncertainty)
         self.assertIn('total', uncertainty)
     
+    @time_test(threshold_seconds=1.5)
     def test_ensemble_diagnosis(self):
         """Test ensemble diagnosis."""
         ensemble = BRISMEnsemble(

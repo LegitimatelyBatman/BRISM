@@ -125,7 +125,8 @@ class MedicalDataPreprocessor:
                                      symptoms_data: List[List[str]], 
                                      icd_data: List[str],
                                      min_symptom_freq: int = 5,
-                                     min_icd_freq: int = 3):
+                                     min_icd_freq: int = 3,
+                                     show_progress: bool = False):
         """
         Build vocabularies from raw data.
         
@@ -134,22 +135,34 @@ class MedicalDataPreprocessor:
             icd_data: List of ICD codes
             min_symptom_freq: Minimum frequency for symptom to be included
             min_icd_freq: Minimum frequency for ICD code to be included
+            show_progress: If True, show progress bars (requires tqdm)
         """
+        # Try to import tqdm if progress bars requested
+        if show_progress:
+            try:
+                from tqdm import tqdm
+            except ImportError:
+                logger.warning("tqdm not installed, progress bars disabled. Install with: pip install tqdm")
+                show_progress = False
+        
         # Count symptom frequencies
         symptom_counts = defaultdict(int)
-        for symptoms in symptoms_data:
+        symptoms_iter = tqdm(symptoms_data, desc="Counting symptoms") if show_progress else symptoms_data
+        for symptoms in symptoms_iter:
             for symptom in symptoms:
                 symptom_counts[symptom] += 1
         
         # Count ICD frequencies
         icd_counts = defaultdict(int)
-        for icd in icd_data:
+        icd_iter = tqdm(icd_data, desc="Counting ICD codes") if show_progress else icd_data
+        for icd in icd_iter:
             icd_counts[icd] += 1
         
         # Build symptom vocab (reserve 0 for padding)
         self.symptom_vocab = {'<PAD>': 0, '<UNK>': 1}
         idx = 2
-        for symptom, count in sorted(symptom_counts.items()):
+        symptom_items = tqdm(sorted(symptom_counts.items()), desc="Building symptom vocab") if show_progress else sorted(symptom_counts.items())
+        for symptom, count in symptom_items:
             if count >= min_symptom_freq:
                 self.symptom_vocab[symptom] = idx
                 idx += 1
@@ -157,7 +170,8 @@ class MedicalDataPreprocessor:
         # Build ICD vocab
         self.icd_vocab = {}
         idx = 0
-        for icd, count in sorted(icd_counts.items()):
+        icd_items = tqdm(sorted(icd_counts.items()), desc="Building ICD vocab") if show_progress else sorted(icd_counts.items())
+        for icd, count in icd_items:
             if count >= min_icd_freq:
                 self.icd_vocab[icd] = idx
                 idx += 1
