@@ -22,6 +22,7 @@ class BRISMConfig:
     max_symptom_length: int = 50
     dropout_rate: float = 0.2
     mc_samples: int = 20  # Monte Carlo dropout samples for uncertainty
+    use_attention: bool = True  # Use attention for symptom aggregation
 
 
 class Encoder(nn.Module):
@@ -80,6 +81,43 @@ class Decoder(nn.Module):
         h = F.relu(self.fc2(h))
         h = self.dropout(h)
         return self.fc_out(h)
+
+
+class AttentionAggregator(nn.Module):
+    """Self-attention mechanism for sequence aggregation."""
+    
+    def __init__(self, embed_dim: int, dropout_rate: float = 0.2):
+        super().__init__()
+        self.attention_linear = nn.Linear(embed_dim, 1)
+        self.dropout = nn.Dropout(dropout_rate)
+        
+    def forward(self, embeddings: torch.Tensor, mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute attention-weighted aggregation of sequence.
+        
+        Args:
+            embeddings: Sequence embeddings [batch_size, seq_len, embed_dim]
+            mask: Optional mask for padding [batch_size, seq_len] (1 for valid, 0 for padding)
+            
+        Returns:
+            aggregated: Attention-weighted sum [batch_size, embed_dim]
+            attention_weights: Attention weights [batch_size, seq_len]
+        """
+        # Compute attention scores
+        scores = self.attention_linear(embeddings).squeeze(-1)  # [B, L]
+        
+        # Apply mask if provided (set padded positions to very negative value)
+        if mask is not None:
+            scores = scores.masked_fill(mask == 0, -1e9)
+        
+        # Softmax to get attention weights
+        attention_weights = F.softmax(scores, dim=-1)  # [B, L]
+        attention_weights = self.dropout(attention_weights)
+        
+        # Weighted sum
+        aggregated = torch.bmm(attention_weights.unsqueeze(1), embeddings).squeeze(1)  # [B, D]
+        
+        return aggregated, attention_weights
 
 
 class SequenceDecoder(nn.Module):
@@ -157,7 +195,12 @@ class BRISM(nn.Module):
         self.symptom_embedding = nn.Embedding(config.symptom_vocab_size, config.symptom_embed_dim)
         self.icd_embedding = nn.Embedding(config.icd_vocab_size, config.icd_embed_dim)
         
-        # Symptom aggregation (mean pooling over sequence)
+        # Symptom aggregation (attention or mean pooling)
+        if config.use_attention:
+            self.symptom_attention = AttentionAggregator(config.symptom_embed_dim, config.dropout_rate)
+        else:
+            self.symptom_attention = None
+        
         # Forward path: symptoms -> ICD
         self.symptom_encoder = Encoder(
             config.symptom_embed_dim,
@@ -214,9 +257,17 @@ class BRISM(nn.Module):
             mu: Latent mean [batch_size, latent_dim]
             logvar: Latent log variance [batch_size, latent_dim]
         """
-        # Embed and aggregate symptoms (mean pooling)
+        # Embed symptoms
         symptom_embeds = self.symptom_embedding(symptoms)  # [B, L, D]
-        symptom_repr = symptom_embeds.mean(dim=1)  # [B, D]
+        
+        # Aggregate symptoms with attention or mean pooling
+        if self.config.use_attention:
+            # Create mask for non-zero tokens (assuming 0 is padding)
+            mask = (symptoms != 0).float()  # [B, L]
+            symptom_repr, _ = self.symptom_attention(symptom_embeds, mask)  # [B, D]
+        else:
+            # Mean pooling (original behavior)
+            symptom_repr = symptom_embeds.mean(dim=1)  # [B, D]
         
         # Encode to latent
         mu, logvar = self.symptom_encoder(symptom_repr)
