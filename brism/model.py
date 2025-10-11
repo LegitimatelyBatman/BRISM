@@ -300,13 +300,15 @@ class SequenceDecoder(nn.Module):
         # Safety check for maximum length
         search_max_length = min(max_length or self.max_length, self.max_length * 2)  # Cap at 2x model max
         
-        # Validate beam_width * max_length to prevent OOM errors
-        # Each beam stores sequences of length max_length
-        total_candidates = beam_width * search_max_length
-        if total_candidates > 10000:
+        # Validate beam_width * max_length * vocab_size to prevent OOM errors
+        # Estimate memory requirements: beam_width beams, each with max_length tokens,
+        # and vocab_size logits per token position
+        estimated_memory = beam_width * search_max_length * self.vocab_size
+        if estimated_memory > 100_000_000:  # 100 million elements
             raise ValueError(
                 f"Beam search memory requirements too large: beam_width ({beam_width}) * "
-                f"max_length ({search_max_length}) = {total_candidates} exceeds limit of 10000. "
+                f"max_length ({search_max_length}) * vocab_size ({self.vocab_size}) = "
+                f"{estimated_memory} exceeds limit of 100,000,000 elements. "
                 f"Reduce beam_width or max_length to avoid out-of-memory errors."
             )
         
