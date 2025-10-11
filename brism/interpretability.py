@@ -85,11 +85,9 @@ class IntegratedGradients:
         gradients = []
         
         for step in range(n_steps + 1):
-            if path_embeds.grad is not None:
-                path_embeds.grad.zero_()
-            
             # Get embedding for this step
             step_embeds = path_embeds[step * batch_size:(step + 1) * batch_size]
+            step_embeds = step_embeds.detach().requires_grad_(True)
             
             # Apply temporal encoding if enabled
             if self.model.use_temporal:
@@ -112,15 +110,20 @@ class IntegratedGradients:
             
             # Get target class
             if target_icd is None:
-                target_icd = icd_logits.argmax(dim=-1)[0].item()
+                target_icd_val = icd_logits.argmax(dim=-1)[0].item()
+            else:
+                target_icd_val = target_icd
             
             # Compute gradients w.r.t. target class
-            target_logits = icd_logits[:, target_icd].sum()
-            target_logits.backward(retain_graph=True)
+            target_logits = icd_logits[:, target_icd_val].sum()
+            target_logits.backward()
             
             # Store gradients
             if step_embeds.grad is not None:
                 gradients.append(step_embeds.grad.detach().clone())
+            else:
+                # If no gradients, use zeros
+                gradients.append(torch.zeros_like(step_embeds))
         
         # Average gradients along path
         gradients = torch.stack(gradients)
@@ -535,7 +538,7 @@ def explain_prediction(
         ig = IntegratedGradients(model)
         attributions = ig.attribute(symptoms, target_icd=int(top_k_icds[0]))
         
-        explanations['gradient_attributions'] = attributions.cpu().numpy().tolist()
+        explanations['gradient_attributions'] = attributions.detach().cpu().numpy().tolist()
         
         # Get top gradient-attributed symptoms
         non_padding = (symptoms != 0).cpu().numpy()
@@ -547,7 +550,7 @@ def explain_prediction(
                 'position': pos,
                 'symptom_id': int(symptoms[pos]),
                 'symptom_name': symptom_vocab.get(int(symptoms[pos]), f"Symptom_{int(symptoms[pos])}") if symptom_vocab else f"Symptom_{int(symptoms[pos])}",
-                'attribution_score': float(attributions[pos])
+                'attribution_score': float(attributions[pos].detach())
             }
             for pos in important_indices
         ]
