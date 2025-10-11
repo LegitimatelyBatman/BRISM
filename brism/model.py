@@ -33,6 +33,52 @@ class BRISMConfig:
     temperature: float = 1.0  # Temperature parameter for probability calibration
     beam_width: int = 5  # For beam search generation
     n_ensemble_models: int = 5  # For pseudo-ensemble
+    
+    def __post_init__(self):
+        """Validate configuration parameters."""
+        # Validate vocabulary sizes
+        if self.symptom_vocab_size <= 0:
+            raise ValueError(f"symptom_vocab_size must be positive, got {self.symptom_vocab_size}")
+        if self.icd_vocab_size <= 0:
+            raise ValueError(f"icd_vocab_size must be positive, got {self.icd_vocab_size}")
+        
+        # Validate dimensions
+        if self.symptom_embed_dim <= 0:
+            raise ValueError(f"symptom_embed_dim must be positive, got {self.symptom_embed_dim}")
+        if self.icd_embed_dim <= 0:
+            raise ValueError(f"icd_embed_dim must be positive, got {self.icd_embed_dim}")
+        if self.encoder_hidden_dim <= 0:
+            raise ValueError(f"encoder_hidden_dim must be positive, got {self.encoder_hidden_dim}")
+        if self.latent_dim <= 0:
+            raise ValueError(f"latent_dim must be positive, got {self.latent_dim}")
+        if self.decoder_hidden_dim <= 0:
+            raise ValueError(f"decoder_hidden_dim must be positive, got {self.decoder_hidden_dim}")
+        if self.max_symptom_length <= 0:
+            raise ValueError(f"max_symptom_length must be positive, got {self.max_symptom_length}")
+        
+        # Validate dropout rate
+        if not 0.0 <= self.dropout_rate <= 1.0:
+            raise ValueError(f"dropout_rate must be between 0 and 1, got {self.dropout_rate}")
+        
+        # Validate mc_samples
+        if self.mc_samples < 1:
+            raise ValueError(f"mc_samples must be at least 1, got {self.mc_samples}")
+        
+        # Validate temporal encoding type
+        if self.temporal_encoding_type not in ['positional', 'timestamp']:
+            raise ValueError(f"temporal_encoding_type must be 'positional' or 'timestamp', got {self.temporal_encoding_type}")
+        
+        # Validate temperature
+        if self.temperature <= 0.0:
+            raise ValueError(f"temperature must be positive, got {self.temperature}")
+        
+        # Validate beam width
+        if self.beam_width < 1:
+            raise ValueError(f"beam_width must be at least 1, got {self.beam_width}")
+        
+        # Validate ensemble models
+        if self.n_ensemble_models < 1:
+            raise ValueError(f"n_ensemble_models must be at least 1, got {self.n_ensemble_models}")
 
 
 class Encoder(nn.Module):
