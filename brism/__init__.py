@@ -7,7 +7,7 @@ mapping between symptoms and ICD codes with uncertainty quantification.
 
 from .model import BRISM, BRISMConfig
 from .train import train_brism, EarlyStopping, ModelCheckpoint, load_checkpoint
-from .inference import diagnose_with_confidence
+from .inference import diagnose_with_confidence, generate_symptoms_beam_search
 from .loss import BRISMLoss, FocalLoss, compute_class_weights
 from .icd_hierarchy import ICDHierarchy
 from .data_loader import (
@@ -31,8 +31,30 @@ from .calibration import (
     calibrate_temperature,
     evaluate_calibration_improvement
 )
+from .interpretability import (
+    IntegratedGradients,
+    AttentionVisualization,
+    CounterfactualExplanations,
+    AttentionRollout,
+    explain_prediction
+)
+from .ensemble import (
+    BRISMEnsemble,
+    train_ensemble,
+    load_ensemble
+)
+from .symptom_normalization import (
+    SymptomNormalizer,
+    SymptomNormalizationLayer,
+    build_symptom_normalizer_from_vocab,
+    create_default_medical_synonyms
+)
+from .active_learning import (
+    ActiveLearner,
+    demonstrate_active_learning
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "BRISM", 
     "BRISMConfig", 
@@ -41,6 +63,7 @@ __all__ = [
     "ModelCheckpoint",
     "load_checkpoint",
     "diagnose_with_confidence",
+    "generate_symptoms_beam_search",
     "BRISMLoss",
     "FocalLoss",
     "compute_class_weights",
@@ -60,5 +83,20 @@ __all__ = [
     "TemporalSymptomEncoder",
     "TemperatureScaling",
     "calibrate_temperature",
-    "evaluate_calibration_improvement"
+    "evaluate_calibration_improvement",
+    # New features
+    "IntegratedGradients",
+    "AttentionVisualization",
+    "CounterfactualExplanations",
+    "AttentionRollout",
+    "explain_prediction",
+    "BRISMEnsemble",
+    "train_ensemble",
+    "load_ensemble",
+    "SymptomNormalizer",
+    "SymptomNormalizationLayer",
+    "build_symptom_normalizer_from_vocab",
+    "create_default_medical_synonyms",
+    "ActiveLearner",
+    "demonstrate_active_learning",
 ]

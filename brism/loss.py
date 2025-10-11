@@ -116,6 +116,7 @@ class BRISMLoss(nn.Module):
     2. KL divergence on latent distributions
     3. Cycle consistency loss
     4. Optional focal loss for class imbalance
+    5. Optional contrastive loss for better latent space
     """
     
     def __init__(self, kl_weight: float = 0.1, cycle_weight: float = 1.0,
@@ -124,7 +125,10 @@ class BRISMLoss(nn.Module):
                  hierarchical_temperature: float = 1.0,
                  class_weights: Optional[torch.Tensor] = None,
                  use_focal_loss: bool = False,
-                 focal_gamma: float = 2.0):
+                 focal_gamma: float = 2.0,
+                 contrastive_weight: float = 0.0,
+                 contrastive_margin: float = 1.0,
+                 contrastive_temperature: float = 0.5):
         """
         Args:
             kl_weight: Weight for KL divergence term
@@ -135,6 +139,9 @@ class BRISMLoss(nn.Module):
             class_weights: Optional class weights for imbalanced data [icd_vocab_size]
             use_focal_loss: Use focal loss instead of standard cross-entropy
             focal_gamma: Gamma parameter for focal loss
+            contrastive_weight: Weight for contrastive loss term
+            contrastive_margin: Margin for triplet loss
+            contrastive_temperature: Temperature for contrastive loss
         """
         super().__init__()
         self.kl_weight = kl_weight
@@ -152,6 +159,11 @@ class BRISMLoss(nn.Module):
             self.focal_loss = FocalLoss(alpha=class_weights, gamma=focal_gamma, reduction='none')
         else:
             self.focal_loss = None
+        
+        # Contrastive learning
+        self.contrastive_weight = contrastive_weight
+        self.contrastive_margin = contrastive_margin
+        self.contrastive_temperature = contrastive_temperature
         
     def kl_divergence(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
@@ -264,6 +276,146 @@ class BRISMLoss(nn.Module):
         
         return kl
     
+    def contrastive_loss_triplet(
+        self,
+        latents: torch.Tensor,
+        labels: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Triplet loss for contrastive learning.
+        
+        Symptoms from the same disease should have similar latent representations,
+        symptoms from different diseases should be far apart.
+        
+        Args:
+            latents: Latent representations [batch_size, latent_dim]
+            labels: ICD code labels [batch_size]
+            
+        Returns:
+            Contrastive loss scalar
+        """
+        batch_size = latents.size(0)
+        
+        if batch_size < 2:
+            return torch.tensor(0.0, device=latents.device)
+        
+        # Compute pairwise distances
+        # [batch_size, batch_size]
+        dists = torch.cdist(latents, latents, p=2)
+        
+        # Create label similarity matrix
+        # [batch_size, batch_size]
+        label_matrix = labels.unsqueeze(0) == labels.unsqueeze(1)
+        
+        # Mask out diagonal (self-similarity)
+        diagonal_mask = ~torch.eye(batch_size, dtype=torch.bool, device=latents.device)
+        
+        # Positive pairs: same label, different samples
+        positive_mask = label_matrix & diagonal_mask
+        
+        # Negative pairs: different labels
+        negative_mask = ~label_matrix
+        
+        # Check if we have positive and negative pairs
+        if not positive_mask.any() or not negative_mask.any():
+            return torch.tensor(0.0, device=latents.device)
+        
+        # For each anchor, find hardest positive and hardest negative
+        losses = []
+        
+        for i in range(batch_size):
+            # Get positive samples for anchor i
+            pos_dists = dists[i][positive_mask[i]]
+            if len(pos_dists) == 0:
+                continue
+            
+            # Get negative samples for anchor i
+            neg_dists = dists[i][negative_mask[i]]
+            if len(neg_dists) == 0:
+                continue
+            
+            # Hardest positive (furthest same-class sample)
+            hardest_positive = pos_dists.max()
+            
+            # Hardest negative (closest different-class sample)
+            hardest_negative = neg_dists.min()
+            
+            # Triplet loss: max(0, d(a,p) - d(a,n) + margin)
+            loss = F.relu(hardest_positive - hardest_negative + self.contrastive_margin)
+            losses.append(loss)
+        
+        if len(losses) == 0:
+            return torch.tensor(0.0, device=latents.device)
+        
+        return torch.stack(losses).mean()
+    
+    def contrastive_loss_infonce(
+        self,
+        latents: torch.Tensor,
+        labels: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        InfoNCE contrastive loss.
+        
+        Uses temperature-scaled similarity to pull together same-class samples
+        and push apart different-class samples.
+        
+        Args:
+            latents: Latent representations [batch_size, latent_dim]
+            labels: ICD code labels [batch_size]
+            
+        Returns:
+            Contrastive loss scalar
+        """
+        batch_size = latents.size(0)
+        
+        if batch_size < 2:
+            return torch.tensor(0.0, device=latents.device)
+        
+        # Normalize latents
+        latents_norm = F.normalize(latents, p=2, dim=1)
+        
+        # Compute similarity matrix
+        # [batch_size, batch_size]
+        similarity = torch.mm(latents_norm, latents_norm.t()) / self.contrastive_temperature
+        
+        # Create label similarity matrix
+        label_matrix = labels.unsqueeze(0) == labels.unsqueeze(1)
+        
+        # Mask out diagonal
+        diagonal_mask = ~torch.eye(batch_size, dtype=torch.bool, device=latents.device)
+        
+        # Positive pairs: same label, different samples
+        positive_mask = label_matrix & diagonal_mask
+        
+        # Check if we have positive pairs
+        if not positive_mask.any():
+            return torch.tensor(0.0, device=latents.device)
+        
+        # For each sample, compute InfoNCE loss
+        losses = []
+        
+        for i in range(batch_size):
+            # Get positive samples for anchor i
+            pos_mask = positive_mask[i]
+            if not pos_mask.any():
+                continue
+            
+            # Numerator: exp(similarity to positives)
+            pos_sim = similarity[i][pos_mask]
+            
+            # Denominator: exp(similarity to all except self)
+            all_sim = similarity[i][diagonal_mask[i]]
+            
+            # InfoNCE loss: -log(sum(exp(pos)) / sum(exp(all)))
+            loss = -torch.log(pos_sim.exp().sum() / all_sim.exp().sum() + 1e-8)
+            losses.append(loss)
+        
+        if len(losses) == 0:
+            return torch.tensor(0.0, device=latents.device)
+        
+        return torch.stack(losses).mean()
+    
     def forward_loss(self, model_output: Tuple, symptoms: torch.Tensor, 
                      icd_codes: torch.Tensor) -> Tuple[torch.Tensor, dict]:
         """
@@ -292,8 +444,15 @@ class BRISMLoss(nn.Module):
         loss_dict = {
             'forward_recon': recon_loss.item(),
             'forward_kl': kl_loss.item(),
-            'forward_total': total_loss.item()
         }
+        
+        # Contrastive loss
+        if self.contrastive_weight > 0:
+            contrastive_loss = self.contrastive_loss_triplet(mu, icd_codes)
+            total_loss = total_loss + self.contrastive_weight * contrastive_loss
+            loss_dict['forward_contrastive'] = contrastive_loss.item()
+        
+        loss_dict['forward_total'] = total_loss.item()
         
         return total_loss, loss_dict
     
