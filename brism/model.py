@@ -705,18 +705,27 @@ class BRISM(nn.Module):
         """
         if n_samples is None:
             n_samples = self.config.mc_samples
-        
-        self.train()  # Enable dropout
-        
+
+        if n_samples < 1:
+            raise ValueError(f"n_samples must be at least 1, got {n_samples}")
+
+        # Enable dropout while preserving the caller's mode
+        was_training = self.training
+        self.train()
+
         predictions = []
         with torch.no_grad():
             for _ in range(n_samples):
                 icd_logits, _, _ = self.forward_path(symptoms)
                 probs = F.softmax(icd_logits, dim=-1)
                 predictions.append(probs)
-        
+
+        # Restore previous training mode
+        if not was_training:
+            self.eval()
+
         predictions = torch.stack(predictions)  # [n_samples, batch_size, icd_vocab_size]
         mean_probs = predictions.mean(dim=0)
-        std_probs = predictions.std(dim=0)
-        
+        std_probs = predictions.std(dim=0, unbiased=False)
+
         return mean_probs, std_probs
