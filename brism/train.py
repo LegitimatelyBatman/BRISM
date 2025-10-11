@@ -4,11 +4,15 @@ Training functions for BRISM model with alternating batch training.
 
 import torch
 import os
+import logging
 from torch.utils.data import DataLoader
 from typing import Optional, Callable, Dict
 from pathlib import Path
 from .model import BRISM
 from .loss import BRISMLoss
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class EarlyStopping:
@@ -43,14 +47,14 @@ class EarlyStopping:
         elif val_loss > self.best_loss - self.min_delta:
             self.counter += 1
             if self.verbose:
-                print(f"EarlyStopping counter: {self.counter} out of {self.patience}")
+                logger.info(f"EarlyStopping counter: {self.counter} out of {self.patience}")
             if self.counter >= self.patience:
                 self.early_stop = True
                 if self.verbose:
-                    print("Early stopping triggered")
+                    logger.info("Early stopping triggered")
         else:
             if self.verbose and val_loss < self.best_loss:
-                print(f"Validation loss improved: {self.best_loss:.4f} -> {val_loss:.4f}")
+                logger.info(f"Validation loss improved: {self.best_loss:.4f} -> {val_loss:.4f}")
             self.best_loss = val_loss
             self.counter = 0
         
@@ -127,12 +131,12 @@ class ModelCheckpoint:
             path = self.checkpoint_dir / 'best_model.pt'
             torch.save(checkpoint, path)
             if self.verbose:
-                print(f"Saved best model to {path}")
+                logger.info(f"Saved best model to {path}")
         else:
             path = self.checkpoint_dir / f'checkpoint_epoch_{epoch}.pt'
             torch.save(checkpoint, path)
             if self.verbose:
-                print(f"Saved checkpoint to {path}")
+                logger.debug(f"Saved checkpoint to {path}")
         
         # Also save latest checkpoint
         latest_path = self.checkpoint_dir / 'latest_checkpoint.pt'
@@ -158,7 +162,7 @@ class ModelCheckpoint:
         
         if metric_value is None:
             if self.verbose:
-                print(f"Warning: Monitored metric '{self.monitor}' not found in metrics")
+                logger.warning(f"Monitored metric '{self.monitor}' not found in metrics")
             return
         
         # Check if this is the best model
@@ -177,9 +181,11 @@ def load_checkpoint(checkpoint_path: str,
                    model: BRISM,
                    optimizer: Optional[torch.optim.Optimizer] = None,
                    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
-                   device: Optional[torch.device] = None) -> Dict:
+                   device: Optional[torch.device] = None,
+                   weights_only: bool = False,
+                   strict: bool = True) -> Dict:
     """
-    Load model checkpoint.
+    Load model checkpoint with validation.
     
     Args:
         checkpoint_path: Path to checkpoint file
@@ -187,22 +193,124 @@ def load_checkpoint(checkpoint_path: str,
         optimizer: Optional optimizer to load state into
         scheduler: Optional scheduler to load state into
         device: Device to load tensors to
+        weights_only: If True, only load model weights (ignore optimizer/scheduler)
+        strict: If True, strictly enforce that keys match when loading state dict
         
     Returns:
         Dictionary with checkpoint information
+        
+    Raises:
+        FileNotFoundError: If checkpoint file doesn't exist
+        ValueError: If checkpoint is incompatible or missing required keys
     """
-    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    # Verify file exists
+    if not Path(checkpoint_path).exists():
+        raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
     
-    model.load_state_dict(checkpoint['model_state_dict'])
+    # Load checkpoint
+    try:
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+    except Exception as e:
+        raise ValueError(f"Failed to load checkpoint from {checkpoint_path}: {str(e)}")
     
-    if optimizer is not None and 'optimizer_state_dict' in checkpoint:
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    # Validate required keys
+    required_keys = ['model_state_dict', 'epoch']
+    missing_keys = [key for key in required_keys if key not in checkpoint]
+    if missing_keys:
+        raise ValueError(f"Checkpoint missing required keys: {missing_keys}. Found keys: {list(checkpoint.keys())}")
     
-    if scheduler is not None and 'scheduler_state_dict' in checkpoint:
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+    # Version check (if version info is available)
+    if 'version' in checkpoint:
+        checkpoint_version = checkpoint['version']
+        # Simple version warning (can be extended)
+        logger.info(f"Loading checkpoint from version: {checkpoint_version}")
+        # Could add compatibility checks here
     
-    print(f"Loaded checkpoint from epoch {checkpoint['epoch']}")
-    print(f"Metrics: {checkpoint.get('metrics', {})}")
+    # Validate model architecture compatibility
+    model_state = checkpoint['model_state_dict']
+    model_dict = model.state_dict()
+    
+    # Check vocab sizes if config is saved
+    if 'config' in checkpoint:
+        saved_config = checkpoint['config']
+        if hasattr(model, 'config'):
+            # Handle both dict and BRISMConfig object
+            if hasattr(saved_config, 'symptom_vocab_size'):
+                # It's a BRISMConfig object
+                if saved_config.symptom_vocab_size != model.config.symptom_vocab_size:
+                    raise ValueError(
+                        f"Checkpoint symptom_vocab_size ({saved_config.symptom_vocab_size}) "
+                        f"doesn't match model ({model.config.symptom_vocab_size})"
+                    )
+                if saved_config.icd_vocab_size != model.config.icd_vocab_size:
+                    raise ValueError(
+                        f"Checkpoint icd_vocab_size ({saved_config.icd_vocab_size}) "
+                        f"doesn't match model ({model.config.icd_vocab_size})"
+                    )
+                if saved_config.latent_dim != model.config.latent_dim:
+                    raise ValueError(
+                        f"Checkpoint latent_dim ({saved_config.latent_dim}) "
+                        f"doesn't match model ({model.config.latent_dim})"
+                    )
+            elif isinstance(saved_config, dict):
+                # It's a dict
+                if saved_config.get('symptom_vocab_size') != model.config.symptom_vocab_size:
+                    raise ValueError(
+                        f"Checkpoint symptom_vocab_size ({saved_config.get('symptom_vocab_size')}) "
+                        f"doesn't match model ({model.config.symptom_vocab_size})"
+                    )
+                if saved_config.get('icd_vocab_size') != model.config.icd_vocab_size:
+                    raise ValueError(
+                        f"Checkpoint icd_vocab_size ({saved_config.get('icd_vocab_size')}) "
+                        f"doesn't match model ({model.config.icd_vocab_size})"
+                    )
+                if saved_config.get('latent_dim') != model.config.latent_dim:
+                    raise ValueError(
+                        f"Checkpoint latent_dim ({saved_config.get('latent_dim')}) "
+                        f"doesn't match model ({model.config.latent_dim})"
+                    )
+    
+    # Check for shape mismatches
+    shape_mismatches = []
+    for key in model_state.keys():
+        if key in model_dict:
+            if model_state[key].shape != model_dict[key].shape:
+                shape_mismatches.append(
+                    f"{key}: checkpoint={model_state[key].shape}, model={model_dict[key].shape}"
+                )
+    
+    if shape_mismatches and strict:
+        raise ValueError(
+            f"Model architecture mismatch. Shape differences:\n" + 
+            "\n".join(shape_mismatches)
+        )
+    elif shape_mismatches:
+        logger.warning("Shape mismatches found (loading in non-strict mode):")
+        for mismatch in shape_mismatches:
+            logger.warning(f"  {mismatch}")
+    
+    # Load model state
+    try:
+        model.load_state_dict(checkpoint['model_state_dict'], strict=strict)
+    except Exception as e:
+        raise ValueError(f"Failed to load model state dict: {str(e)}")
+    
+    # Load optimizer and scheduler (unless weights_only)
+    if not weights_only:
+        if optimizer is not None and 'optimizer_state_dict' in checkpoint:
+            try:
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            except Exception as e:
+                logger.warning(f"Failed to load optimizer state: {e}")
+        
+        if scheduler is not None and 'scheduler_state_dict' in checkpoint:
+            try:
+                scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            except Exception as e:
+                logger.warning(f"Failed to load scheduler state: {e}")
+    
+    logger.info(f"Successfully loaded checkpoint from epoch {checkpoint['epoch']}")
+    logger.info(f"Metrics: {checkpoint.get('metrics', {})}")
     
     return checkpoint
 
@@ -318,20 +426,34 @@ def train_brism(
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             
-            # Track metrics
-            epoch_losses.append(loss.item())
+            # Track metrics (use .detach() to avoid keeping computation graphs)
+            epoch_losses.append(loss.detach().item())
             for key, val in loss_dict.items():
                 if key not in epoch_metrics:
                     epoch_metrics[key] = []
-                epoch_metrics[key].append(val)
+                epoch_metrics[key].append(val.detach().item() if torch.is_tensor(val) else val)
+            
+            # Clean up to free memory
+            del loss, output
+            if direction in [2, 3]:  # Cycle computations use more memory
+                torch.cuda.empty_cache() if torch.cuda.is_available() else None
             
             # Logging
             if global_step % log_interval == 0:
                 avg_loss = sum(epoch_losses[-log_interval:]) / min(log_interval, len(epoch_losses))
-                print(f"Epoch {epoch+1}/{num_epochs}, Step {global_step}, Loss: {avg_loss:.4f}")
+                logger.info(f"Epoch {epoch+1}/{num_epochs}, Step {global_step}, Loss: {avg_loss:.4f}")
+                
+                # Log memory usage on GPU
+                if torch.cuda.is_available():
+                    memory_allocated = torch.cuda.memory_allocated(device) / 1024**3  # GB
+                    memory_reserved = torch.cuda.memory_reserved(device) / 1024**3  # GB
+                    logger.debug(f"GPU Memory: {memory_allocated:.2f}GB allocated, {memory_reserved:.2f}GB reserved")
                 
                 if callback:
-                    callback(epoch, global_step, {'loss': avg_loss, **loss_dict})
+                    callback_metrics = {'loss': avg_loss}
+                    for k, v in loss_dict.items():
+                        callback_metrics[k] = v.detach().item() if torch.is_tensor(v) else v
+                    callback(epoch, global_step, callback_metrics)
             
             global_step += 1
         
@@ -342,20 +464,20 @@ def train_brism(
         epoch_avg_metrics = {k: sum(v) / len(v) for k, v in epoch_metrics.items()}
         history['epoch_metrics'].append(epoch_avg_metrics)
         
-        print(f"\nEpoch {epoch+1}/{num_epochs} - Average Loss: {avg_epoch_loss:.4f}")
+        logger.info(f"\nEpoch {epoch+1}/{num_epochs} - Average Loss: {avg_epoch_loss:.4f}")
         for key, val in epoch_avg_metrics.items():
-            print(f"  {key}: {val:.4f}")
+            logger.info(f"  {key}: {val:.4f}")
         
         # Validation
         if val_loader is not None:
             val_loss = evaluate_brism(model, val_loader, loss_fn, device)
             history['val_loss'].append(val_loss)
-            print(f"  Validation Loss: {val_loss:.4f}")
+            logger.info(f"  Validation Loss: {val_loss:.4f}")
             
             # Check early stopping
             if early_stopping is not None:
                 if early_stopping(val_loss):
-                    print(f"Early stopping at epoch {epoch+1}")
+                    logger.info(f"Early stopping at epoch {epoch+1}")
                     break
         
         # Save checkpoint
@@ -371,7 +493,8 @@ def train_brism(
         if scheduler is not None:
             scheduler.step()
         
-        print()
+        # Clean up after epoch
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
     
     return history
 
@@ -473,3 +596,32 @@ def train_epoch_simple(
     avg_loss = total_loss / num_batches
     
     return {'loss': avg_loss}
+
+
+def configure_logging(level: str = 'INFO', log_file: Optional[str] = None):
+    """
+    Configure logging for BRISM training.
+    
+    Args:
+        level: Logging level ('DEBUG', 'INFO', 'WARNING', 'ERROR')
+        log_file: Optional file to write logs to (in addition to console)
+    """
+    log_level = getattr(logging, level.upper(), logging.INFO)
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=log_level,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    # Add file handler if specified
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(log_level)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        logging.getLogger().addHandler(file_handler)
+    
+    logger.info(f"Logging configured at {level} level")
+

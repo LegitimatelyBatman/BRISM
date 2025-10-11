@@ -5,12 +5,16 @@ Medical data preprocessing utilities for MIMIC-III/IV and other clinical dataset
 import pandas as pd
 import numpy as np
 import torch
+import logging
 from torch.utils.data import Dataset
 from typing import Dict, List, Tuple, Optional, Set
 from pathlib import Path
 import re
 from collections import defaultdict
 import warnings
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class ICDNormalizer:
@@ -370,7 +374,8 @@ def load_mimic_data(
     train_ratio: float = 0.7,
     val_ratio: float = 0.15,
     test_ratio: float = 0.15,
-    random_seed: int = 42
+    random_seed: int = 42,
+    dry_run: bool = False
 ) -> Tuple[MedicalRecordDataset, MedicalRecordDataset, MedicalRecordDataset, MedicalDataPreprocessor]:
     """
     Load and preprocess MIMIC data.
@@ -385,13 +390,59 @@ def load_mimic_data(
         val_ratio: Validation set ratio
         test_ratio: Test set ratio
         random_seed: Random seed
+        dry_run: If True, only validates data without full processing
         
     Returns:
         Tuple of (train_dataset, val_dataset, test_dataset, preprocessor)
+        
+    Raises:
+        FileNotFoundError: If input files don't exist
+        ValueError: If required columns are missing or data is malformed
     """
-    # Load data
-    diagnoses_df = pd.read_csv(diagnoses_path)
-    notes_df = pd.read_csv(notes_path)
+    # Validate file paths
+    if not Path(diagnoses_path).exists():
+        raise FileNotFoundError(f"Diagnoses file not found: {diagnoses_path}")
+    if not Path(notes_path).exists():
+        raise FileNotFoundError(f"Notes file not found: {notes_path}")
+    
+    # Load data with error handling
+    try:
+        diagnoses_df = pd.read_csv(diagnoses_path)
+    except Exception as e:
+        raise ValueError(f"Failed to load diagnoses CSV from {diagnoses_path}: {str(e)}")
+    
+    try:
+        notes_df = pd.read_csv(notes_path)
+    except Exception as e:
+        raise ValueError(f"Failed to load notes CSV from {notes_path}: {str(e)}")
+    
+    # Validate required columns exist
+    # For diagnoses, we need either 'hadm_id' or 'subject_id', plus 'icd_code'
+    id_col = 'hadm_id' if 'hadm_id' in diagnoses_df.columns else 'subject_id'
+    if id_col not in diagnoses_df.columns:
+        raise ValueError(f"Diagnoses file must contain 'hadm_id' or 'subject_id' column. Found columns: {list(diagnoses_df.columns)}")
+    if 'icd_code' not in diagnoses_df.columns:
+        raise ValueError(f"Diagnoses file must contain 'icd_code' column. Found columns: {list(diagnoses_df.columns)}")
+    
+    # For notes, we need either 'hadm_id' or 'subject_id', plus 'text'
+    notes_id_col = 'hadm_id' if 'hadm_id' in notes_df.columns else 'subject_id'
+    if notes_id_col not in notes_df.columns:
+        raise ValueError(f"Notes file must contain 'hadm_id' or 'subject_id' column. Found columns: {list(notes_df.columns)}")
+    if 'text' not in notes_df.columns:
+        raise ValueError(f"Notes file must contain 'text' column. Found columns: {list(notes_df.columns)}")
+    
+    # Dry run: validate data without full processing
+    if dry_run:
+        n_diagnoses = len(diagnoses_df)
+        n_notes = len(notes_df)
+        logger.info(f"Dry run - Data validation successful:")
+        logger.info(f"  Diagnoses: {n_diagnoses} records")
+        logger.info(f"  Notes: {n_notes} records")
+        logger.info(f"  Diagnoses columns: {list(diagnoses_df.columns)}")
+        logger.info(f"  Notes columns: {list(notes_df.columns)}")
+        # Return empty datasets for dry run
+        empty_dataset = MedicalRecordDataset([], [], [])
+        return empty_dataset, empty_dataset, empty_dataset, MedicalDataPreprocessor(max_symptom_length=max_symptom_length)
     
     # Initialize preprocessor
     preprocessor = MedicalDataPreprocessor(max_symptom_length=max_symptom_length)
