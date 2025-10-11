@@ -2,7 +2,7 @@
 
 import unittest
 import torch
-from brism.loss import BRISMLoss
+from brism.loss import BRISMLoss, FocalLoss, compute_class_weights
 
 
 class TestBRISMLoss(unittest.TestCase):
@@ -158,6 +158,122 @@ class TestBRISMLoss(unittest.TestCase):
         self.assertIn('cycle_rev_icd_recon', loss_dict)
         self.assertIn('cycle_rev_symptom_recon', loss_dict)
         self.assertIn('cycle_rev_cycle', loss_dict)
+
+
+class TestFocalLoss(unittest.TestCase):
+    """Test focal loss for class imbalance."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.batch_size = 10
+        self.num_classes = 20
+    
+    def test_focal_loss_basic(self):
+        """Test basic focal loss computation."""
+        focal_loss = FocalLoss(gamma=2.0)
+        
+        logits = torch.randn(self.batch_size, self.num_classes)
+        targets = torch.randint(0, self.num_classes, (self.batch_size,))
+        
+        loss = focal_loss(logits, targets)
+        
+        self.assertIsInstance(loss.item(), float)
+        self.assertGreater(loss.item(), 0.0)
+    
+    def test_focal_loss_with_alpha(self):
+        """Test focal loss with class weights."""
+        alpha = torch.rand(self.num_classes)
+        focal_loss = FocalLoss(alpha=alpha, gamma=2.0)
+        
+        logits = torch.randn(self.batch_size, self.num_classes)
+        targets = torch.randint(0, self.num_classes, (self.batch_size,))
+        
+        loss = focal_loss(logits, targets)
+        
+        self.assertIsInstance(loss.item(), float)
+        self.assertGreater(loss.item(), 0.0)
+    
+    def test_focal_loss_reduction_none(self):
+        """Test focal loss with no reduction."""
+        focal_loss = FocalLoss(gamma=2.0, reduction='none')
+        
+        logits = torch.randn(self.batch_size, self.num_classes)
+        targets = torch.randint(0, self.num_classes, (self.batch_size,))
+        
+        loss = focal_loss(logits, targets)
+        
+        self.assertEqual(loss.shape, (self.batch_size,))
+        self.assertTrue((loss >= 0).all())
+    
+    def test_focal_loss_gamma_zero_equals_ce(self):
+        """Test that focal loss with gamma=0 approximates cross-entropy."""
+        focal_loss = FocalLoss(gamma=0.0)
+        
+        logits = torch.randn(self.batch_size, self.num_classes)
+        targets = torch.randint(0, self.num_classes, (self.batch_size,))
+        
+        focal = focal_loss(logits, targets)
+        ce = torch.nn.functional.cross_entropy(logits, targets)
+        
+        # Should be very close
+        self.assertTrue(torch.allclose(focal, ce, atol=1e-5))
+
+
+class TestClassWeights(unittest.TestCase):
+    """Test class weight computation."""
+    
+    def test_compute_class_weights(self):
+        """Test class weight computation."""
+        class_counts = {0: 100, 1: 50, 2: 10, 3: 200}
+        num_classes = 5
+        
+        weights = compute_class_weights(class_counts, num_classes)
+        
+        # Check shape
+        self.assertEqual(weights.shape, (num_classes,))
+        
+        # Check all positive
+        self.assertTrue((weights > 0).all())
+        
+        # Rare classes should have higher weights
+        self.assertGreater(weights[2].item(), weights[0].item())
+        self.assertGreater(weights[2].item(), weights[3].item())
+    
+    def test_brism_loss_with_class_weights(self):
+        """Test BRISM loss with class weights."""
+        class_weights = torch.rand(50)
+        loss_fn = BRISMLoss(
+            kl_weight=0.1,
+            cycle_weight=1.0,
+            class_weights=class_weights,
+            use_focal_loss=False
+        )
+        
+        logits = torch.randn(4, 50)
+        target = torch.randint(0, 50, (4,))
+        
+        loss = loss_fn.reconstruction_loss_icd(logits, target)
+        
+        self.assertEqual(loss.shape, (4,))
+        self.assertTrue((loss >= 0).all())
+    
+    def test_brism_loss_with_focal_loss(self):
+        """Test BRISM loss with focal loss."""
+        loss_fn = BRISMLoss(
+            kl_weight=0.1,
+            cycle_weight=1.0,
+            use_focal_loss=True,
+            focal_gamma=2.0
+        )
+        
+        logits = torch.randn(4, 50)
+        target = torch.randint(0, 50, (4,))
+        
+        loss = loss_fn.reconstruction_loss_icd(logits, target)
+        
+        # Focal loss should return batch-wise loss
+        self.assertEqual(loss.shape, (4,))
+        self.assertTrue((loss >= 0).all())
 
 
 if __name__ == '__main__':

@@ -23,6 +23,11 @@ class BRISMConfig:
     dropout_rate: float = 0.2
     mc_samples: int = 20  # Monte Carlo dropout samples for uncertainty
     use_attention: bool = True  # Use attention for symptom aggregation
+    # Temporal encoding settings
+    use_temporal_encoding: bool = False  # Enable temporal encoding for symptoms
+    temporal_encoding_type: str = 'positional'  # 'positional' or 'timestamp'
+    # Temperature scaling for calibration
+    temperature: float = 1.0  # Temperature parameter for probability calibration
 
 
 class Encoder(nn.Module):
@@ -191,9 +196,23 @@ class BRISM(nn.Module):
         super().__init__()
         self.config = config
         
+        # Temperature parameter for calibration (learnable)
+        self.temperature = nn.Parameter(torch.ones(1) * config.temperature)
+        
         # Embeddings
         self.symptom_embedding = nn.Embedding(config.symptom_vocab_size, config.symptom_embed_dim)
         self.icd_embedding = nn.Embedding(config.icd_vocab_size, config.icd_embed_dim)
+        
+        # Temporal encoding (optional)
+        self.use_temporal = config.use_temporal_encoding
+        if config.use_temporal_encoding:
+            from .temporal import TemporalEncoding
+            self.temporal_encoding = TemporalEncoding(
+                embed_dim=config.symptom_embed_dim,
+                max_length=config.max_symptom_length,
+                encoding_type=config.temporal_encoding_type,
+                dropout=config.dropout_rate
+            )
         
         # Symptom aggregation (attention or mean pooling)
         if config.use_attention:
@@ -245,12 +264,13 @@ class BRISM(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
     
-    def forward_path(self, symptoms: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward_path(self, symptoms: torch.Tensor, timestamps: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Forward path: symptoms -> latent -> ICD probabilities.
         
         Args:
             symptoms: Symptom token IDs [batch_size, seq_len]
+            timestamps: Optional timestamps for symptoms [batch_size, seq_len]
             
         Returns:
             icd_logits: ICD prediction logits [batch_size, icd_vocab_size]
@@ -259,6 +279,10 @@ class BRISM(nn.Module):
         """
         # Embed symptoms
         symptom_embeds = self.symptom_embedding(symptoms)  # [B, L, D]
+        
+        # Add temporal encoding if enabled
+        if self.use_temporal:
+            symptom_embeds = self.temporal_encoding(symptom_embeds, timestamps)
         
         # Aggregate symptoms with attention or mean pooling
         if self.config.use_attention:
@@ -273,8 +297,8 @@ class BRISM(nn.Module):
         mu, logvar = self.symptom_encoder(symptom_repr)
         z = self.reparameterize(mu, logvar)
         
-        # Decode to ICD
-        icd_logits = self.icd_decoder(z)
+        # Decode to ICD with temperature scaling
+        icd_logits = self.icd_decoder(z) / self.temperature
         
         return icd_logits, mu, logvar
     
