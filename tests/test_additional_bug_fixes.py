@@ -217,5 +217,43 @@ class TestInputValidationImprovements(unittest.TestCase):
             self.fail(f"Long string should be handled, but got: {e}")
 
 
+class TestEnsembleNumericalStability(unittest.TestCase):
+    """Test numerical stability in ensemble predictions."""
+    
+    def test_pseudo_ensemble_single_sample(self):
+        """Test that pseudo-ensemble handles n_samples=1 gracefully."""
+        from brism.ensemble import BRISMEnsemble
+        
+        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        ensemble = BRISMEnsemble(config=config, n_models=5, use_pseudo_ensemble=True)
+        
+        symptoms = torch.tensor([[1, 2, 3, 0, 0]])
+        
+        # With n_samples=1, std should be 0 (not NaN)
+        mean_probs, std_probs, uncertainty = ensemble.predict_with_uncertainty(symptoms, n_samples=1)
+        
+        self.assertFalse(torch.isnan(std_probs).any(),
+                        "Standard deviation should not be NaN for n_samples=1. "
+                        "Should return zeros instead.")
+        self.assertTrue(torch.allclose(std_probs, torch.zeros_like(std_probs)),
+                       "Standard deviation should be zero for n_samples=1")
+    
+    def test_pseudo_ensemble_multiple_samples(self):
+        """Test that pseudo-ensemble works with multiple samples."""
+        from brism.ensemble import BRISMEnsemble
+        
+        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        ensemble = BRISMEnsemble(config=config, n_models=5, use_pseudo_ensemble=True)
+        
+        symptoms = torch.tensor([[1, 2, 3, 0, 0]])
+        
+        # With n_samples > 1, should get meaningful std
+        mean_probs, std_probs, uncertainty = ensemble.predict_with_uncertainty(symptoms, n_samples=10)
+        
+        self.assertFalse(torch.isnan(mean_probs).any(), "Mean should not contain NaN")
+        self.assertFalse(torch.isnan(std_probs).any(), "Std should not contain NaN")
+        self.assertTrue((std_probs >= 0).all(), "Std should be non-negative")
+
+
 if __name__ == '__main__':
     unittest.main()
