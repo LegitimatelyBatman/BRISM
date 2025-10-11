@@ -57,6 +57,13 @@ from .config_validator import (
     ConfigValidator,
     validate_config_file
 )
+from .export import (
+    export_to_onnx,
+    export_to_torchscript,
+    quantize_model,
+    prune_model,
+    export_for_deployment
+)
 
 __version__ = "3.0.1"
 __all__ = [
@@ -106,4 +113,9 @@ __all__ = [
     "demonstrate_active_learning",
     "ConfigValidator",
     "validate_config_file",
+    "export_to_onnx",
+    "export_to_torchscript",
+    "quantize_model",
+    "prune_model",
+    "export_for_deployment",
 ]
