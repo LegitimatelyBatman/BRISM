@@ -5,6 +5,103 @@ All notable changes to BRISM will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2025-10-11
+
+### 📚 Documentation Enhancement and Test Consolidation Release
+
+This release focuses on improving documentation clarity and consolidating test infrastructure for better maintainability.
+
+### Changed
+
+#### Documentation
+- **Enhanced** `IMPLEMENTATION.md` with detailed, non-technical explanations suitable for those not well-versed in AI
+  - Added comprehensive architecture explanations with real-world analogies
+  - Included step-by-step implementation guides with visual descriptions
+  - Expanded technical details for each component
+  - Added troubleshooting and common pitfalls sections
+- **Updated** `README.md` to accurately reflect current codebase state
+  - Removed references to deleted example files
+  - Updated feature descriptions to match v3.0.0+ capabilities
+  - Clarified installation and usage instructions
+- **Consolidated** bug fix documentation from `BUG_FIXES_SUMMARY.md` into this changelog
+  - All 8 bug fixes and 4 improvements now documented here
+  - Removed redundant `BUG_FIXES_SUMMARY.md` file
+  
+#### Dependencies
+- **Synchronized** `setup.py` and `requirements.txt` to have identical package dependencies
+  - Added `pyyaml>=6.0`, `pandas>=2.0.0`, `scikit-learn>=1.3.0`, and `matplotlib>=3.7.0` to `setup.py`
+  - Both files now specify the same 7 core dependencies
+
+#### Testing
+- **Consolidated** test suite from 18 files to 14 files
+  - Merged bug fix tests into core module tests for better organization
+  - `test_bug_fixes.py` content moved to `test_loss.py` and `test_model.py`
+  - `test_bug_fixes_validation.py` content moved to appropriate module tests
+  - `test_additional_bug_fixes.py` content moved to module-specific tests
+  - Improved test organization by grouping tests by functionality rather than fix type
+
+### Removed
+- `BUG_FIXES_SUMMARY.md` - Content consolidated into this changelog
+- `test_bug_fixes.py` - Tests merged into appropriate module test files
+- `test_bug_fixes_validation.py` - Tests merged into appropriate module test files
+- `test_additional_bug_fixes.py` - Tests merged into appropriate module test files
+
+### Improved
+- Clearer documentation accessible to broader audience
+- Better dependency management with synchronized package lists
+- More maintainable test structure organized by module
+- Reduced file duplication across the repository
+
+### Bug Fixes Documented (from BUG_FIXES_SUMMARY.md)
+
+#### 1. Memory Leak in IntegratedGradients
+**Issue**: Intermediate tensor gradients not cleaned up, causing memory leaks in repeated calls.
+**Fix**: Added cleanup of `path_embeds.grad` after computation.
+**Impact**: Prevents memory leaks when computing feature attributions repeatedly.
+
+#### 2. Memory Leak in AttentionVisualization  
+**Issue**: Gradient-based importance method not cleaning up intermediate gradients.
+**Fix**: Added cleanup of `symptom_embeds.grad` after computation.
+**Impact**: Prevents memory leaks in gradient-based importance scoring.
+
+#### 3. Exception Safety in predict_with_uncertainty
+**Issue**: Model state not restored if exception occurred during MC dropout sampling.
+**Fix**: Wrapped prediction logic in try-finally block to ensure state restoration.
+**Impact**: Model state always restored, even on exceptions.
+
+#### 4. Empty String Validation in normalize_icd10
+**Issue**: No validation of empty or whitespace-only inputs.
+**Fix**: Added validation raising ValueError for empty inputs.
+**Impact**: Catches invalid inputs early with clear error messages.
+
+#### 5. Exception Handling in encode_icd
+**Issue**: Would raise exceptions on empty codes instead of returning None.
+**Fix**: Added try-except to handle ValueError gracefully.
+**Impact**: Maintains backward compatibility while benefiting from validation.
+
+#### 6. Empty String Handling in SymptomNormalizer
+**Issue**: Weak handling of empty and whitespace-only strings.
+**Fix**: Added early validation returning empty string for edge cases.
+**Impact**: Robust handling of edge cases in symptom text processing.
+
+#### 7. Empty Calibration Loader Validation
+**Issue**: No validation if calibration loader was empty.
+**Fix**: Added validation after collecting data with clear error message.
+**Impact**: Clear error message for misconfigured calibration.
+
+#### 8. Empty Code Handling in ICD Hierarchy
+**Issue**: Could misbehave with empty or very short ICD codes.
+**Fix**: Added validation returning maximum distance for invalid codes.
+**Impact**: Robust hierarchical distance computation for all inputs.
+
+### Migration Notes
+- All code functionality remains unchanged from v3.0.1
+- No API changes or breaking changes
+- Documentation updates and test reorganization only
+- All 183 tests continue to pass
+
+---
+
 ## [3.0.1] - 2025-10-11
 
 ### 📚 Documentation and Example Consolidation
