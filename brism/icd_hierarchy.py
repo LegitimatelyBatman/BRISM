@@ -53,6 +53,10 @@ class ICDHierarchy:
         if code1 == code2:
             return 0.0
         
+        # Handle empty or very short codes
+        if not code1 or not code2:
+            return 4.0  # Maximum distance for invalid codes
+        
         # Extract hierarchy levels
         def get_levels(code):
             # Chapter: first character

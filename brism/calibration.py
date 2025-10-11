@@ -64,6 +64,9 @@ def calibrate_temperature(
         
     Returns:
         Optimal temperature value
+        
+    Raises:
+        ValueError: If calibration_loader is empty
     """
     model.eval()
     model.to(device)
@@ -101,6 +104,12 @@ def calibrate_temperature(
             
             all_logits.append(icd_logits)
             all_labels.append(icd_codes)
+    
+    # Validate that we got data
+    if len(all_logits) == 0:
+        raise ValueError(
+            "Calibration loader is empty. Cannot calibrate temperature without data."
+        )
     
     all_logits = torch.cat(all_logits, dim=0)
     all_labels = torch.cat(all_labels, dim=0)

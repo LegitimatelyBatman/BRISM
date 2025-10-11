@@ -150,6 +150,9 @@ class IntegratedGradients:
         
         # Clean up gradients to prevent memory leaks
         self.model.zero_grad()
+        # Also clean up any lingering gradients on intermediate tensors
+        if path_embeds.grad is not None:
+            path_embeds.grad = None
         
         if squeeze_output:
             attributions = attributions.squeeze(0)
@@ -278,6 +281,9 @@ class AttentionVisualization:
         
         # Clean up gradients
         self.model.zero_grad()
+        # Also clean up any lingering gradients on intermediate tensors
+        if symptom_embeds.grad is not None:
+            symptom_embeds.grad = None
         
         if squeeze_output:
             importance = importance.squeeze(0)

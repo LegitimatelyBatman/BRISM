@@ -711,21 +711,23 @@ class BRISM(nn.Module):
 
         # Enable dropout while preserving the caller's mode
         was_training = self.training
-        self.train()
+        
+        try:
+            self.train()
 
-        predictions = []
-        with torch.no_grad():
-            for _ in range(n_samples):
-                icd_logits, _, _ = self.forward_path(symptoms)
-                probs = F.softmax(icd_logits, dim=-1)
-                predictions.append(probs)
+            predictions = []
+            with torch.no_grad():
+                for _ in range(n_samples):
+                    icd_logits, _, _ = self.forward_path(symptoms)
+                    probs = F.softmax(icd_logits, dim=-1)
+                    predictions.append(probs)
 
-        # Restore previous training mode
-        if not was_training:
-            self.eval()
+            predictions = torch.stack(predictions)  # [n_samples, batch_size, icd_vocab_size]
+            mean_probs = predictions.mean(dim=0)
+            std_probs = predictions.std(dim=0, unbiased=False)
 
-        predictions = torch.stack(predictions)  # [n_samples, batch_size, icd_vocab_size]
-        mean_probs = predictions.mean(dim=0)
-        std_probs = predictions.std(dim=0, unbiased=False)
-
-        return mean_probs, std_probs
+            return mean_probs, std_probs
+        finally:
+            # Restore previous training mode even if exception occurs
+            if not was_training:
+                self.eval()
