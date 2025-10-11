@@ -504,4 +504,30 @@ def load_mimic_data(
     val_dataset = encode_split(val_ids)
     test_dataset = encode_split(test_ids)
     
+    # Validate that splits contain samples
+    if len(train_dataset) == 0:
+        raise ValueError(
+            f"Training split resulted in zero samples. "
+            f"This may be due to: (1) no common patient IDs between diagnoses and notes, "
+            f"(2) all ICD codes filtered out by min_icd_freq={min_icd_freq}, "
+            f"or (3) encoding failures. Common IDs found: {len(common_ids)}, "
+            f"Train patient IDs: {len(train_ids)}"
+        )
+    if len(val_dataset) == 0:
+        raise ValueError(
+            f"Validation split resulted in zero samples. "
+            f"This may be due to: (1) insufficient data for val_ratio={val_ratio}, "
+            f"(2) all ICD codes in validation set filtered out by min_icd_freq={min_icd_freq}, "
+            f"or (3) encoding failures. Common IDs found: {len(common_ids)}, "
+            f"Val patient IDs: {len(val_ids)}"
+        )
+    if len(test_dataset) == 0:
+        raise ValueError(
+            f"Test split resulted in zero samples. "
+            f"This may be due to: (1) insufficient data for test_ratio={test_ratio}, "
+            f"(2) all ICD codes in test set filtered out by min_icd_freq={min_icd_freq}, "
+            f"or (3) encoding failures. Common IDs found: {len(common_ids)}, "
+            f"Test patient IDs: {len(test_ids)}"
+        )
+    
     return train_dataset, val_dataset, test_dataset, preprocessor

@@ -291,9 +291,44 @@ def load_checkpoint(checkpoint_path: str,
     
     # Load model state
     try:
-        model.load_state_dict(checkpoint['model_state_dict'], strict=strict)
+        incompatible_keys = model.load_state_dict(checkpoint['model_state_dict'], strict=strict)
     except Exception as e:
         raise ValueError(f"Failed to load model state dict: {str(e)}")
+    
+    # Log summary of parameters not loaded (non-strict mode)
+    if not strict:
+        missing_keys = incompatible_keys.missing_keys if hasattr(incompatible_keys, 'missing_keys') else []
+        unexpected_keys = incompatible_keys.unexpected_keys if hasattr(incompatible_keys, 'unexpected_keys') else []
+        
+        if missing_keys or unexpected_keys or shape_mismatches:
+            logger.warning("=" * 60)
+            logger.warning("CHECKPOINT LOADING SUMMARY (non-strict mode)")
+            logger.warning("=" * 60)
+            
+            if shape_mismatches:
+                logger.warning(f"Shape mismatches: {len(shape_mismatches)} parameters")
+                for mismatch in shape_mismatches[:5]:  # Show first 5
+                    logger.warning(f"  - {mismatch}")
+                if len(shape_mismatches) > 5:
+                    logger.warning(f"  ... and {len(shape_mismatches) - 5} more")
+            
+            if missing_keys:
+                logger.warning(f"Missing in checkpoint: {len(missing_keys)} parameters")
+                for key in missing_keys[:5]:  # Show first 5
+                    logger.warning(f"  - {key}")
+                if len(missing_keys) > 5:
+                    logger.warning(f"  ... and {len(missing_keys) - 5} more")
+            
+            if unexpected_keys:
+                logger.warning(f"Unexpected in checkpoint: {len(unexpected_keys)} parameters")
+                for key in unexpected_keys[:5]:  # Show first 5
+                    logger.warning(f"  - {key}")
+                if len(unexpected_keys) > 5:
+                    logger.warning(f"  ... and {len(unexpected_keys) - 5} more")
+            
+            logger.warning("=" * 60)
+            logger.warning("Some parameters were not loaded. Model may need retraining.")
+            logger.warning("=" * 60)
     
     # Load optimizer and scheduler (unless weights_only)
     if not weights_only:

@@ -43,7 +43,7 @@ from brism import (
     IntegratedGradients, AttentionVisualization, CounterfactualExplanations,
     AttentionRollout, explain_prediction,
     # Generation
-    generate_symptoms_beam_search, generate_symptoms_with_uncertainty,
+    generate_symptoms_beam_search,
     # Ensemble
     BRISMEnsemble, train_ensemble,
     # Synonym Handling
@@ -56,6 +56,7 @@ from brism import (
     # Calibration
     calibrate_temperature, evaluate_calibration_improvement, plot_reliability_diagram
 )
+from brism.inference import generate_symptoms_with_uncertainty
 from brism.train import train_epoch_simple
 
 
