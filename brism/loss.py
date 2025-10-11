@@ -174,6 +174,28 @@ class BRISMLoss(nn.Module):
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
         return kl
     
+    def _ensure_distance_matrix_device(self, device: torch.device) -> torch.Tensor:
+        """
+        Ensure distance matrix is on the correct device.
+        
+        Args:
+            device: Target device
+            
+        Returns:
+            Distance matrix on the correct device
+        """
+        # Create matrix if it doesn't exist
+        if self._distance_matrix is None:
+            self._distance_matrix = self.icd_hierarchy.get_distance_tensor(device=device)
+            return self._distance_matrix
+        
+        # Check if device matches
+        if self._distance_matrix.device != device:
+            # Recreate on correct device
+            self._distance_matrix = self.icd_hierarchy.get_distance_tensor(device=device)
+        
+        return self._distance_matrix
+    
     def reconstruction_loss_icd(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         """
         Reconstruction loss for ICD predictions with optional class weighting and focal loss.
@@ -190,13 +212,12 @@ class BRISMLoss(nn.Module):
         
         # Add hierarchical loss if hierarchy is provided
         if self.icd_hierarchy is not None and self.hierarchical_weight > 0:
-            # Get distance matrix (cache it for efficiency)
-            if self._distance_matrix is None:
-                self._distance_matrix = self.icd_hierarchy.get_distance_tensor(device=logits.device)
+            # Get distance matrix on the correct device
+            distance_matrix = self._ensure_distance_matrix_device(logits.device)
             
             # Compute hierarchical loss
             hier_loss = compute_hierarchical_loss(
-                logits, target, self._distance_matrix, 
+                logits, target, distance_matrix, 
                 temperature=self.hierarchical_temperature
             )
             

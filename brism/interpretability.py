@@ -85,6 +85,9 @@ class IntegratedGradients:
         gradients = []
         
         for step in range(n_steps + 1):
+            # Zero out model gradients before backward pass
+            self.model.zero_grad()
+            
             # Get embedding for this step
             step_embeds = path_embeds[step * batch_size:(step + 1) * batch_size]
             step_embeds = step_embeds.detach().requires_grad_(True)
@@ -386,6 +389,7 @@ class CounterfactualExplanations:
         
         # Greedy selection starting with empty set
         selected = []
+        selected_prob = 0.0
         
         for idx in non_padding:
             # Try adding this symptom
@@ -406,7 +410,7 @@ class CounterfactualExplanations:
             test_prob = test_probs[target_icd].item()
             
             # Add if increases probability
-            if test_prob > test_probs[target_icd].item() if len(selected) == 0 else selected_prob:
+            if test_prob > selected_prob:
                 selected.append(idx)
                 selected_prob = test_prob
                 
