@@ -213,6 +213,18 @@ def load_checkpoint(checkpoint_path: str,
     except Exception as e:
         raise ValueError(f"Failed to load checkpoint from {checkpoint_path}: {str(e)}")
     
+    # Detect checkpoint's original device and warn if it differs from requested device
+    if device is not None and 'model_state_dict' in checkpoint:
+        # Get device of first tensor in checkpoint to detect original device
+        first_key = next(iter(checkpoint['model_state_dict'].keys()))
+        checkpoint_device = checkpoint['model_state_dict'][first_key].device
+        
+        if checkpoint_device != device:
+            logger.warning(
+                f"Checkpoint was saved on {checkpoint_device} but loading to {device}. "
+                f"Tensors will be moved to {device} using map_location."
+            )
+    
     # Validate required keys
     required_keys = ['model_state_dict', 'epoch']
     missing_keys = [key for key in required_keys if key not in checkpoint]

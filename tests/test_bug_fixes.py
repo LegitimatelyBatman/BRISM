@@ -102,7 +102,8 @@ class TestModelBugFixes(unittest.TestCase):
     
     def test_beam_search_memory_limit(self):
         """Test that beam_search raises error when memory requirements are too large."""
-        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        # Create config with larger vocab to make the limit easier to hit
+        config = BRISMConfig(symptom_vocab_size=10000, icd_vocab_size=50, latent_dim=32)
         model = BRISM(config)
         
         z = torch.randn(1, 32)
@@ -114,9 +115,11 @@ class TestModelBugFixes(unittest.TestCase):
         self.assertEqual(sequences.shape[1], 5, "Beam width should be 5")
         
         # Should raise error with excessive parameters
+        # With vocab_size=10000, max_length capped at 100 (2 * decoder.max_length):
+        # beam_width * search_max_length * vocab_size = 1100 * 100 * 10000 = 1,100,000,000 > 100,000,000
         with self.assertRaises(ValueError) as context:
             model.symptom_decoder.beam_search(
-                z, beam_width=1000, max_length=1000
+                z, beam_width=1100, max_length=1000
             )
         self.assertIn("memory requirements too large", str(context.exception).lower())
 

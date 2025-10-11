@@ -67,11 +67,10 @@ class IntegratedGradients:
         
         # Check numerical stability: if baseline is very similar to input
         # the integrated gradients will be meaningless
-        input_diff = (symptoms.float() - baseline.float()).abs().sum().item()
-        if input_diff < 1e-6:
+        if torch.allclose(symptoms.float(), baseline.float()):
             import warnings
             warnings.warn(
-                f"Input and baseline are nearly identical (L1 difference: {input_diff:.2e}). "
+                f"Input and baseline are nearly identical. "
                 f"Integrated gradients attribution will be meaningless. "
                 f"Returning zeros.",
                 UserWarning

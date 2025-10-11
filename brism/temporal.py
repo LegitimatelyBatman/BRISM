@@ -94,11 +94,11 @@ class TemporalEncoding(nn.Module):
             # Validate timestamp values to prevent overflow or extreme values
             # Check for reasonable range (e.g., timestamps in years should be < 10000)
             max_timestamp = timestamps.abs().max().item()
-            if max_timestamp > 1e6:  # Reasonable upper bound
+            if max_timestamp > 10000:  # Reasonable upper bound
                 import warnings
                 warnings.warn(
                     f"Timestamp values are very large (max: {max_timestamp:.2e}). "
-                    f"This may cause overflow or extreme encoding values. "
+                    f"Very large timestamp values may cause numerical instability in the sinusoidal encoding. "
                     f"Consider normalizing timestamps to a reasonable range.",
                     UserWarning
                 )
