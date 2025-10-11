@@ -217,6 +217,89 @@ def batch_diagnose(
     return results
 
 
+def generate_symptoms_beam_search(
+    model: BRISM,
+    icd_code: torch.Tensor,
+    device: torch.device,
+    beam_width: int = 5,
+    temperature: float = 1.0,
+    length_penalty: float = 1.0,
+    return_all_beams: bool = False
+) -> Dict:
+    """
+    Generate symptom sequences from ICD code using beam search.
+    
+    Args:
+        model: Trained BRISM model
+        icd_code: ICD code token ID [batch_size] or scalar
+        device: Device to run on
+        beam_width: Number of beams to keep
+        temperature: Temperature for softmax (higher = more diverse)
+        length_penalty: Penalty for sequence length (>1 favors longer sequences)
+        return_all_beams: If True, return all beams; if False, return only best
+        
+    Returns:
+        Dictionary containing generated sequences and scores
+    """
+    model.to(device)
+    icd_code = icd_code.to(device)
+    
+    # Add batch dimension if needed
+    if icd_code.dim() == 0:
+        icd_code = icd_code.unsqueeze(0)
+    
+    batch_size = icd_code.size(0)
+    
+    model.eval()  # Use eval mode for deterministic beam search
+    
+    with torch.no_grad():
+        # Encode ICD to latent
+        icd_embeds = model.icd_embedding(icd_code)
+        mu, logvar = model.icd_encoder(icd_embeds)
+        z = model.reparameterize(mu, logvar)
+        
+        # Generate with beam search
+        sequences, scores, lengths = model.symptom_decoder.beam_search(
+            z, 
+            beam_width=beam_width,
+            temperature=temperature,
+            length_penalty=length_penalty
+        )
+    
+    results = []
+    
+    for i in range(batch_size):
+        if return_all_beams:
+            # Return all beams
+            beam_results = []
+            for k in range(beam_width):
+                beam_results.append({
+                    'sequence': sequences[i, k].cpu().numpy().tolist(),
+                    'score': float(scores[i, k]),
+                    'length': int(lengths[i, k])
+                })
+            
+            result = {
+                'beams': beam_results,
+                'best_sequence': sequences[i, 0].cpu().numpy().tolist(),
+                'best_score': float(scores[i, 0])
+            }
+        else:
+            # Return only best beam
+            result = {
+                'sequence': sequences[i, 0].cpu().numpy().tolist(),
+                'score': float(scores[i, 0]),
+                'length': int(lengths[i, 0])
+            }
+        
+        results.append(result)
+    
+    if batch_size == 1:
+        return results[0]
+    
+    return results
+
+
 def evaluate_model_uncertainty(
     model: BRISM,
     data_loader,

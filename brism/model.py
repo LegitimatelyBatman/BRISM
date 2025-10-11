@@ -133,6 +133,7 @@ class SequenceDecoder(nn.Module):
         super().__init__()
         self.max_length = max_length
         self.hidden_dim = hidden_dim
+        self.vocab_size = vocab_size
         self.embedding = nn.Embedding(vocab_size, hidden_dim)
         self.lstm = nn.LSTM(hidden_dim, hidden_dim, batch_first=True)
         self.latent_to_hidden = nn.Linear(latent_dim, hidden_dim)
@@ -181,6 +182,160 @@ class SequenceDecoder(nn.Module):
             logits = torch.cat(logits_list, dim=1)
         
         return logits
+    
+    def beam_search(
+        self, 
+        z: torch.Tensor, 
+        beam_width: int = 5, 
+        temperature: float = 1.0,
+        length_penalty: float = 1.0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Generate sequences using beam search.
+        
+        Args:
+            z: Latent representation [batch_size, latent_dim]
+            beam_width: Number of beams to keep
+            temperature: Temperature for softmax (higher = more diverse)
+            length_penalty: Penalty for sequence length (>1 favors longer sequences)
+            
+        Returns:
+            sequences: Top beam_width sequences [batch_size, beam_width, seq_len]
+            scores: Log probabilities for each sequence [batch_size, beam_width]
+            lengths: Actual lengths of sequences [batch_size, beam_width]
+        """
+        batch_size = z.size(0)
+        device = z.device
+        
+        # Initialize hidden state from latent
+        h0 = self.latent_to_hidden(z).unsqueeze(0)
+        c0 = torch.zeros_like(h0)
+        
+        # Initialize beams: [batch_size, beam_width, seq_len]
+        # Start with padding token (0)
+        beams = torch.zeros(batch_size, beam_width, self.max_length, dtype=torch.long, device=device)
+        beam_scores = torch.zeros(batch_size, beam_width, device=device)
+        beam_scores[:, 1:] = float('-inf')  # Only first beam is active initially
+        
+        # Track which beams are finished (generated EOS or reached max length)
+        finished = torch.zeros(batch_size, beam_width, dtype=torch.bool, device=device)
+        
+        # Expand hidden states for beam search
+        # [1, batch_size, hidden_dim] -> [1, batch_size * beam_width, hidden_dim]
+        h = h0.repeat(1, beam_width, 1)
+        c = c0.repeat(1, beam_width, 1)
+        
+        for t in range(self.max_length):
+            if t == 0:
+                # First step: use start token for all beams
+                input_token = torch.zeros(batch_size, 1, dtype=torch.long, device=device)
+                
+                # Run LSTM
+                embedded = self.embedding(input_token)
+                embedded = self.dropout(embedded)
+                lstm_out, (h_new, c_new) = self.lstm(embedded, (h0, c0))
+                lstm_out = self.dropout(lstm_out)
+                step_logits = self.fc_out(lstm_out).squeeze(1)  # [batch_size, vocab_size]
+                
+                # Apply temperature
+                step_logits = step_logits / temperature
+                log_probs = F.log_softmax(step_logits, dim=-1)
+                
+                # Get top-k tokens for each batch
+                topk_log_probs, topk_indices = log_probs.topk(beam_width, dim=-1)
+                
+                # Initialize beams
+                beams[:, :, 0] = topk_indices
+                beam_scores = topk_log_probs
+                
+                # Expand hidden states
+                h = h_new.repeat(1, beam_width, 1)
+                c = c_new.repeat(1, beam_width, 1)
+            else:
+                # Subsequent steps: expand each beam
+                # Reshape for batch processing
+                # [batch_size, beam_width, 1] -> [batch_size * beam_width, 1]
+                input_token = beams[:, :, t-1].view(-1, 1)
+                
+                # Run LSTM
+                embedded = self.embedding(input_token)
+                embedded = self.dropout(embedded)
+                lstm_out, (h, c) = self.lstm(embedded, (h, c))
+                lstm_out = self.dropout(lstm_out)
+                step_logits = self.fc_out(lstm_out).squeeze(1)  # [batch_size * beam_width, vocab_size]
+                
+                # Apply temperature
+                step_logits = step_logits / temperature
+                log_probs = F.log_softmax(step_logits, dim=-1)
+                
+                # Reshape back to [batch_size, beam_width, vocab_size]
+                log_probs = log_probs.view(batch_size, beam_width, -1)
+                
+                # Add previous scores (broadcasting)
+                # [batch_size, beam_width, vocab_size] = [batch_size, beam_width, 1] + [batch_size, beam_width, vocab_size]
+                candidate_scores = beam_scores.unsqueeze(-1) + log_probs
+                
+                # For finished beams, force padding token with no additional score
+                finished_mask = finished.unsqueeze(-1).expand(-1, -1, self.vocab_size)
+                candidate_scores = torch.where(
+                    finished_mask,
+                    beam_scores.unsqueeze(-1),  # Keep same score
+                    candidate_scores
+                )
+                
+                # Flatten beam and vocab dimensions to get top-k across all candidates
+                candidate_scores_flat = candidate_scores.view(batch_size, -1)
+                
+                # Get top beam_width candidates
+                topk_scores, topk_indices_flat = candidate_scores_flat.topk(beam_width, dim=-1)
+                
+                # Convert flat indices back to beam and vocab indices
+                topk_beam_indices = topk_indices_flat // self.vocab_size
+                topk_token_indices = topk_indices_flat % self.vocab_size
+                
+                # Update beams
+                new_beams = torch.zeros_like(beams)
+                new_finished = torch.zeros_like(finished)
+                
+                for b in range(batch_size):
+                    for k in range(beam_width):
+                        beam_idx = topk_beam_indices[b, k]
+                        token_idx = topk_token_indices[b, k]
+                        
+                        # Copy previous beam
+                        new_beams[b, k, :t] = beams[b, beam_idx, :t]
+                        # Add new token
+                        new_beams[b, k, t] = token_idx
+                        
+                        # Update finished status
+                        new_finished[b, k] = finished[b, beam_idx] or (token_idx == 0)
+                
+                beams = new_beams
+                beam_scores = topk_scores
+                finished = new_finished
+                
+                # Reorder hidden states according to selected beams
+                h_new = torch.zeros_like(h)
+                c_new = torch.zeros_like(c)
+                for b in range(batch_size):
+                    for k in range(beam_width):
+                        beam_idx = topk_beam_indices[b, k]
+                        src_idx = b * beam_width + beam_idx
+                        dst_idx = b * beam_width + k
+                        h_new[:, dst_idx, :] = h[:, src_idx, :]
+                        c_new[:, dst_idx, :] = c[:, src_idx, :]
+                h = h_new
+                c = c_new
+            
+            # Early stopping if all beams are finished
+            if finished.all():
+                break
+        
+        # Apply length penalty
+        lengths = (beams != 0).sum(dim=-1).float()
+        beam_scores = beam_scores / (lengths ** length_penalty + 1e-10)
+        
+        return beams, beam_scores, lengths.long()
 
 
 class BRISM(nn.Module):
