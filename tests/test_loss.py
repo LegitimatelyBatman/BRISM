@@ -275,5 +275,111 @@ class TestClassWeights(unittest.TestCase):
         self.assertTrue((loss >= 0).all())
 
 
+class TestLossComponentBugFixes(unittest.TestCase):
+    """Test bug fixes in loss.py"""
+    
+    def test_suggest_weights_uses_vocab_size_ratio(self):
+        """Test that suggest_weights properly uses vocab_size_ratio."""
+        # Test with different vocab_size_ratios
+        weights_ratio_1 = BRISMLoss.suggest_weights(vocab_size_ratio=1.0)
+        weights_ratio_2 = BRISMLoss.suggest_weights(vocab_size_ratio=2.0)
+        weights_ratio_4 = BRISMLoss.suggest_weights(vocab_size_ratio=4.0)
+        
+        # Hierarchical weight should decrease as vocab_size_ratio increases
+        self.assertGreater(
+            weights_ratio_1['hierarchical_weight'],
+            weights_ratio_2['hierarchical_weight'],
+            "Hierarchical weight should decrease with larger vocab_size_ratio"
+        )
+        self.assertGreater(
+            weights_ratio_2['hierarchical_weight'],
+            weights_ratio_4['hierarchical_weight'],
+            "Hierarchical weight should decrease with larger vocab_size_ratio"
+        )
+    
+    def test_distance_matrix_device_warning(self):
+        """Test that device change warning is issued."""
+        from brism.icd_hierarchy import ICDHierarchy
+        import warnings
+        
+        # Create a loss function with hierarchy
+        icd_vocab_size = 3
+        hierarchy = ICDHierarchy(icd_vocab_size)
+        # Build hierarchy from mapping to initialize distance matrix
+        hierarchy.build_from_mapping({
+            0: 'A00',
+            1: 'A01',
+            2: 'B00'
+        })
+        loss_fn = BRISMLoss(
+            kl_weight=0.1,
+            cycle_weight=1.0,
+            hierarchical_weight=0.3,
+            icd_hierarchy=hierarchy
+        )
+        
+        # First call - no warning (creating matrix)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            matrix1 = loss_fn._ensure_distance_matrix_device(torch.device('cpu'))
+            self.assertEqual(len(w), 0, "No warning on first device access")
+        
+        # Second call with same device - no warning
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            matrix2 = loss_fn._ensure_distance_matrix_device(torch.device('cpu'))
+            self.assertEqual(len(w), 0, "No warning when device unchanged")
+        
+        # Third call with different device - should warn
+        if torch.cuda.is_available():
+            with warnings.catch_warnings(record=True) as w:
+                warnings.simplefilter("always")
+                matrix3 = loss_fn._ensure_distance_matrix_device(torch.device('cuda'))
+                self.assertGreater(len(w), 0, "Warning should be issued on device change")
+                self.assertIn("Distance matrix device changed", str(w[0].message))
+    
+    def test_contrastive_loss_single_label(self):
+        """Test that contrastive loss returns zero when all samples have same label."""
+        loss_fn = BRISMLoss(contrastive_weight=0.5)
+        
+        batch_size = 4
+        latents = torch.randn(batch_size, 32)
+        
+        # All samples have the same label
+        labels = torch.tensor([5, 5, 5, 5])
+        
+        # Should return zero loss (no negative pairs)
+        loss = loss_fn.contrastive_loss_infonce(latents, labels)
+        self.assertEqual(loss.item(), 0.0, "Contrastive loss should be zero with single label")
+    
+    def test_contrastive_loss_batch_size_one(self):
+        """Test that contrastive loss returns zero for batch_size < 2."""
+        loss_fn = BRISMLoss(contrastive_weight=0.5)
+
+        # Batch size of 1
+        latents = torch.randn(1, 32)
+        labels = torch.tensor([5])
+
+        loss = loss_fn.contrastive_loss_infonce(latents, labels)
+        self.assertEqual(loss.item(), 0.0, "Contrastive loss should be zero for batch_size=1")
+
+    def test_contrastive_loss_infonce_numerical_stability(self):
+        """Contrastive InfoNCE loss should remain finite for tiny temperatures."""
+        loss_fn = BRISMLoss(contrastive_weight=0.5, contrastive_temperature=1e-6)
+
+        # Two identical samples for the positive pair and one negative sample. The
+        # tiny temperature produces extremely large similarities that previously
+        # caused overflow (inf/inf) during the exp/sum computation.
+        latents = torch.tensor([
+            [10.0, 10.0],
+            [10.0, 10.0],
+            [1.0, 0.0],
+        ])
+        labels = torch.tensor([0, 0, 1])
+
+        loss = loss_fn.contrastive_loss_infonce(latents, labels)
+        self.assertTrue(torch.isfinite(loss), "Loss should not overflow or be NaN")
+
+
 if __name__ == '__main__':
     unittest.main()

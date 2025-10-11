@@ -107,5 +107,37 @@ class TestTemporalEncoding(unittest.TestCase):
         self.assertEqual(logvar.shape, (self.batch_size, 32))
 
 
+class TestTemporalBugFixes(unittest.TestCase):
+    """Test bug fixes in temporal.py"""
+    
+    def test_timestamp_overflow_warning(self):
+        """Test that warning is issued for very large timestamp values."""
+        import warnings
+        from brism.temporal import TemporalEncoding
+        
+        encoder = TemporalEncoding(
+            embed_dim=64,
+            max_length=20,
+            encoding_type='timestamp'
+        )
+        
+        embeddings = torch.randn(2, 10, 64)
+        
+        # Normal timestamps - no warning
+        normal_timestamps = torch.randn(2, 10)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            output = encoder(embeddings, normal_timestamps)
+            self.assertEqual(len(w), 0, "No warning for normal timestamps")
+        
+        # Very large timestamps - should warn
+        large_timestamps = torch.ones(2, 10) * 1e7
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            output = encoder(embeddings, large_timestamps)
+            self.assertGreater(len(w), 0, "Warning should be issued for large timestamps")
+            self.assertIn("Timestamp values are very large", str(w[0].message))
+
+
 if __name__ == '__main__':
     unittest.main()

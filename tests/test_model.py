@@ -231,5 +231,57 @@ class TestSharedLatentSpace(unittest.TestCase):
         self.assertEqual(mu1.shape, (batch_size, self.config.latent_dim))
 
 
+class TestModelBugFixes(unittest.TestCase):
+    """Test bug fixes in model.py"""
+    
+    def test_beam_search_memory_limit(self):
+        """Test that beam_search raises error when memory requirements are too large."""
+        from brism import BRISM, BRISMConfig
+        
+        # Create config with larger vocab to make the limit easier to hit
+        config = BRISMConfig(symptom_vocab_size=10000, icd_vocab_size=50, latent_dim=32)
+        model = BRISM(config)
+        
+        z = torch.randn(1, 32)
+        
+        # Should work with reasonable parameters
+        sequences, scores, lengths = model.symptom_decoder.beam_search(
+            z, beam_width=5, max_length=50
+        )
+        self.assertEqual(sequences.shape[1], 5, "Beam width should be 5")
+        
+        # Should raise error with excessive parameters
+        # With vocab_size=10000, max_length capped at 100 (2 * decoder.max_length):
+        # beam_width * search_max_length * vocab_size = 1100 * 100 * 10000 = 1,100,000,000 > 100,000,000
+        with self.assertRaises(ValueError) as context:
+            model.symptom_decoder.beam_search(
+                z, beam_width=1100, max_length=1000
+            )
+        self.assertIn("memory requirements too large", str(context.exception).lower())
+    
+    def test_predict_with_uncertainty_exception_safety(self):
+        """Test that predict_with_uncertainty restores training mode on exception."""
+        from brism import BRISM, BRISMConfig
+        
+        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        model = BRISM(config)
+        
+        # Set to eval mode
+        model.eval()
+        initial_mode = model.training
+        
+        # Try with invalid input (should fail but restore mode)
+        try:
+            # This will fail due to shape mismatch, but should restore training mode
+            invalid_symptoms = torch.tensor([])  # Empty tensor
+            model.predict_with_uncertainty(invalid_symptoms, n_samples=5)
+        except:
+            pass
+        
+        # Check that training mode is still False (was restored)
+        self.assertEqual(model.training, initial_mode, 
+                        "Training mode should be restored even on exception")
+
+
 if __name__ == '__main__':
     unittest.main()
