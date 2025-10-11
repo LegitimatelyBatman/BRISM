@@ -147,17 +147,27 @@ This ensures both directions and cycle consistency are jointly optimized.
 
 ## Example Usage
 
-Run the example script to see the model in action with synthetic data:
+Run the example scripts to see the model in action with synthetic data:
 
 ```bash
+# Basic example with synthetic data
 python example.py
+
+# Comprehensive example showing all v3.0.0 features
+python example_new_features.py
+
+# Enhanced features example (temporal encoding, focal loss, etc.)
+python example_enhanced_features.py
 ```
 
-This demonstrates:
-- Model initialization and training
+These demonstrate:
+- Model initialization and training with new v3.0.0 defaults
 - Diagnosis with confidence intervals
-- Symptom generation from ICD codes
-- Uncertainty quantification
+- Interpretability tools (attention visualization, integrated gradients)
+- Beam search for symptom generation
+- Ensemble uncertainty quantification
+- Active learning interface
+- And more!
 
 ## Testing
 
