@@ -113,7 +113,7 @@ def generate_symptoms_with_uncertainty(
     model: BRISM,
     icd_code: torch.Tensor,
     device: torch.device,
-    n_samples: int = 20,
+    n_samples: Optional[int] = None,
     max_length: Optional[int] = None
 ) -> Dict:
     """
@@ -131,25 +131,35 @@ def generate_symptoms_with_uncertainty(
     """
     model.to(device)
     icd_code = icd_code.to(device)
-    
+
+    if n_samples is None:
+        n_samples = model.config.mc_samples
+    if n_samples < 1:
+        raise ValueError(f"n_samples must be at least 1, got {n_samples}")
+
     # Add batch dimension if needed
     if icd_code.dim() == 0:
         icd_code = icd_code.unsqueeze(0)
-    
+
     batch_size = icd_code.size(0)
-    
+
+    previous_mode = model.training
     model.train()  # Enable dropout
-    
+
     generated_sequences = []
-    
-    with torch.no_grad():
-        for _ in range(n_samples):
-            symptom_logits, _, _ = model.reverse_path(icd_code, target_symptoms=None)
-            symptom_ids = symptom_logits.argmax(dim=-1)
-            generated_sequences.append(symptom_ids.cpu().numpy())
-    
+
+    try:
+        with torch.no_grad():
+            for _ in range(n_samples):
+                symptom_logits, _, _ = model.reverse_path(icd_code, target_symptoms=None)
+                symptom_ids = symptom_logits.argmax(dim=-1)
+                generated_sequences.append(symptom_ids.cpu().numpy())
+    finally:
+        if not previous_mode:
+            model.eval()
+
     generated_sequences = np.array(generated_sequences)  # [n_samples, batch_size, seq_len]
-    
+
     results = []
     
     for i in range(batch_size):
@@ -250,21 +260,28 @@ def generate_symptoms_beam_search(
     
     batch_size = icd_code.size(0)
     
+    previous_mode = model.training
     model.eval()  # Use eval mode for deterministic beam search
-    
-    with torch.no_grad():
-        # Encode ICD to latent
-        icd_embeds = model.icd_embedding(icd_code)
-        mu, logvar = model.icd_encoder(icd_embeds)
-        z = model.reparameterize(mu, logvar)
-        
-        # Generate with beam search
-        sequences, scores, lengths = model.symptom_decoder.beam_search(
-            z, 
-            beam_width=beam_width,
-            temperature=temperature,
-            length_penalty=length_penalty
-        )
+
+    try:
+        with torch.no_grad():
+            # Encode ICD to latent
+            icd_embeds = model.icd_embedding(icd_code)
+            mu, logvar = model.icd_encoder(icd_embeds)
+            z = model.reparameterize(mu, logvar)
+
+            # Generate with beam search
+            sequences, scores, lengths = model.symptom_decoder.beam_search(
+                z,
+                beam_width=beam_width,
+                temperature=temperature,
+                length_penalty=length_penalty
+            )
+    finally:
+        if previous_mode:
+            model.train()
+        else:
+            model.eval()
     
     results = []
     

@@ -513,7 +513,7 @@ class ActiveLearner:
     def _get_mc_predictions(
         self,
         symptoms: torch.Tensor,
-        n_samples: int
+        n_samples: Optional[int]
     ) -> np.ndarray:
         """
         Get Monte Carlo predictions.
@@ -525,21 +525,33 @@ class ActiveLearner:
         Returns:
             Predictions [batch_size, n_samples, vocab_size]
         """
+        if n_samples is None:
+            n_samples = self.model.config.mc_samples
+        if n_samples < 1:
+            raise ValueError(f"n_samples must be at least 1, got {n_samples}")
+
         device = symptoms.device
         self.model.to(device)
+        symptoms = symptoms.to(device)
+
+        previous_mode = self.model.training
         self.model.train()  # Enable dropout
-        
+
         batch_size = symptoms.size(0)
         vocab_size = self.model.config.icd_vocab_size
-        
-        all_probs = np.zeros((batch_size, n_samples, vocab_size))
-        
-        with torch.no_grad():
-            for i in range(n_samples):
-                icd_logits, _, _ = self.model.forward_path(symptoms)
-                probs = F.softmax(icd_logits, dim=-1)
-                all_probs[:, i, :] = probs.cpu().numpy()
-        
+
+        all_probs = np.zeros((batch_size, n_samples, vocab_size), dtype=np.float32)
+
+        try:
+            with torch.no_grad():
+                for i in range(n_samples):
+                    icd_logits, _, _ = self.model.forward_path(symptoms)
+                    probs = F.softmax(icd_logits, dim=-1)
+                    all_probs[:, i, :] = probs.cpu().numpy()
+        finally:
+            if not previous_mode:
+                self.model.eval()
+
         return all_probs
     
     def interactive_diagnosis(

@@ -69,7 +69,7 @@ def calibrate_temperature(
     model.to(device)
     
     # Store original temperature
-    original_temp = model.temperature.data.clone()
+    original_temp = model.temperature.detach().clone()
     
     # Only optimize temperature parameter
     optimizer = torch.optim.LBFGS(
@@ -89,13 +89,15 @@ def calibrate_temperature(
             
             # Get logits (before temperature scaling)
             # Temporarily set temperature to 1.0
-            temp_backup = model.temperature.data.clone()
-            model.temperature.data.fill_(1.0)
-            
+            temp_backup = model.temperature.detach().clone()
+            with torch.no_grad():
+                model.temperature.fill_(1.0)
+
             icd_logits, _, _ = model.forward_path(symptoms)
-            
+
             # Restore temperature
-            model.temperature.data = temp_backup
+            with torch.no_grad():
+                model.temperature.copy_(temp_backup)
             
             all_logits.append(icd_logits)
             all_labels.append(icd_codes)
@@ -124,18 +126,21 @@ def calibrate_temperature(
     # Ensure temperature is reasonable (between 0.1 and 10)
     if optimal_temp < 0.1:
         print(f"Warning: Temperature {optimal_temp:.4f} too low, clipping to 0.1")
-        model.temperature.data.fill_(0.1)
+        with torch.no_grad():
+            model.temperature.fill_(0.1)
         optimal_temp = 0.1
     elif optimal_temp > 10.0:
         print(f"Warning: Temperature {optimal_temp:.4f} too high, clipping to 10.0")
-        model.temperature.data.fill_(10.0)
+        with torch.no_grad():
+            model.temperature.fill_(10.0)
         optimal_temp = 10.0
-    
+
     # Validate that calibration improved ECE
     from .metrics import compute_calibration_metrics
-    
+
     # Compute ECE before calibration (with original temperature)
-    model.temperature.data = original_temp.clone()
+    with torch.no_grad():
+        model.temperature.copy_(original_temp)
     with torch.no_grad():
         probs_before = F.softmax(all_logits / model.temperature, dim=-1)
     ece_before = compute_calibration_metrics(
@@ -145,7 +150,8 @@ def calibrate_temperature(
     )['ece']
     
     # Compute ECE after calibration
-    model.temperature.data.fill_(optimal_temp)
+    with torch.no_grad():
+        model.temperature.fill_(optimal_temp)
     with torch.no_grad():
         probs_after = F.softmax(all_logits / model.temperature, dim=-1)
     ece_after = compute_calibration_metrics(
@@ -206,11 +212,13 @@ def evaluate_calibration_improvement(
             probs_scaled = F.softmax(icd_logits, dim=-1)
             
             # Get predictions without temperature scaling
-            temp_backup = model.temperature.data.clone()
-            model.temperature.data.fill_(1.0)
+            temp_backup = model.temperature.detach().clone()
+            with torch.no_grad():
+                model.temperature.fill_(1.0)
             icd_logits_unscaled, _, _ = model.forward_path(symptoms)
             probs_unscaled = F.softmax(icd_logits_unscaled, dim=-1)
-            model.temperature.data = temp_backup
+            with torch.no_grad():
+                model.temperature.copy_(temp_backup)
             
             all_probs_scaled.append(probs_scaled.cpu())
             all_probs_unscaled.append(probs_unscaled.cpu())
