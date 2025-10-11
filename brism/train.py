@@ -375,7 +375,9 @@ def train_brism(
     callback: Optional[Callable[[int, int, Dict], None]] = None,
     checkpoint_dir: Optional[str] = None,
     early_stopping_patience: Optional[int] = None,
-    save_best_only: bool = True
+    save_best_only: bool = True,
+    max_grad_norm: Optional[float] = None,
+    show_progress: bool = False
 ) -> Dict[str, list]:
     """
     Train BRISM model with alternating batches.
@@ -400,6 +402,9 @@ def train_brism(
         checkpoint_dir: Optional directory to save checkpoints
         early_stopping_patience: Optional patience for early stopping (None = no early stopping)
         save_best_only: Only save best model based on validation loss
+        max_grad_norm: Optional maximum gradient norm for clipping (None = no clipping).
+                      Helps prevent gradient explosion, especially with focal loss.
+        show_progress: If True and tqdm is available, show progress bar during training
         
     Returns:
         Dictionary of training history
@@ -408,8 +413,18 @@ def train_brism(
     history = {
         'train_loss': [],
         'val_loss': [],
-        'epoch_metrics': []
+        'epoch_metrics': [],
+        'learning_rate': []
     }
+    
+    # Try to import tqdm if progress bars requested
+    tqdm_available = False
+    if show_progress:
+        try:
+            from tqdm import tqdm
+            tqdm_available = True
+        except ImportError:
+            logger.warning("tqdm not installed, progress bars disabled. Install with: pip install tqdm")
     
     # Initialize checkpoint and early stopping
     checkpointer = None
@@ -432,7 +447,12 @@ def train_brism(
     
     global_step = 0
     
-    for epoch in range(num_epochs):
+    # Setup epoch iterator with optional progress bar
+    epoch_range = range(num_epochs)
+    if tqdm_available:
+        epoch_range = tqdm(epoch_range, desc="Training", unit="epoch")
+    
+    for epoch in epoch_range:
         model.train()
         epoch_losses = []
         epoch_metrics = {}
@@ -470,7 +490,8 @@ def train_brism(
             
             # Backward pass
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            if max_grad_norm is not None:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=max_grad_norm)
             optimizer.step()
             
             # Track metrics (use .detach() to avoid keeping computation graphs)
@@ -535,6 +556,10 @@ def train_brism(
                 **epoch_avg_metrics
             }
             checkpointer(model, optimizer, epoch+1, checkpoint_metrics, scheduler)
+        
+        # Track current learning rate (before scheduler step)
+        current_lr = optimizer.param_groups[0]['lr']
+        history['learning_rate'].append(current_lr)
         
         # Learning rate scheduling
         if scheduler is not None:
