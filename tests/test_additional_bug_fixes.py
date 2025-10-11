@@ -255,5 +255,47 @@ class TestEnsembleNumericalStability(unittest.TestCase):
         self.assertTrue((std_probs >= 0).all(), "Std should be non-negative")
 
 
+class TestActiveLearningValidation(unittest.TestCase):
+    """Test input validation in active learning."""
+    
+    def test_add_symptom_rejects_padding_token(self):
+        """Test that _add_symptom rejects padding token (symptom_id=0)."""
+        from brism.active_learning import ActiveLearner
+        
+        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        model = BRISM(config)
+        learner = ActiveLearner(model)
+        
+        symptoms = torch.tensor([1, 2, 0, 0, 0])
+        
+        # Should raise ValueError when trying to add padding token
+        with self.assertRaises(ValueError) as context:
+            learner._add_symptom(symptoms, 0)
+        
+        self.assertIn("padding token", str(context.exception).lower(),
+                     "Error message should mention padding token")
+        self.assertIn("symptom_id=0", str(context.exception),
+                     "Error message should specify symptom_id=0")
+    
+    def test_add_symptom_valid_ids(self):
+        """Test that _add_symptom works with valid symptom IDs."""
+        from brism.active_learning import ActiveLearner
+        
+        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        model = BRISM(config)
+        learner = ActiveLearner(model)
+        
+        symptoms = torch.tensor([1, 2, 0, 0, 0])
+        
+        # Should work fine with valid symptom ID
+        augmented = learner._add_symptom(symptoms, 3)
+        self.assertEqual(augmented[2].item(), 3, "Should add symptom at first padding position")
+        
+        # Should work at end of sequence too
+        full_symptoms = torch.tensor([1, 2, 3, 4, 5])
+        augmented = learner._add_symptom(full_symptoms, 99)
+        self.assertEqual(augmented[-1].item(), 99, "Should replace last token when full")
+
+
 if __name__ == '__main__':
     unittest.main()
