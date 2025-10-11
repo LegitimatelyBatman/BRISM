@@ -87,17 +87,21 @@ class SymptomNormalizer:
         # Merge with provided synonyms
         self.synonym_dict = {**self.default_abbreviations, **self.synonym_dict}
     
-    def normalize(self, symptom_text: str) -> str:
+    def normalize(self, symptom_text: str, preserve_case: bool = False) -> str:
         """
         Normalize a symptom description to canonical form.
         
         Args:
             symptom_text: Raw symptom description
+            preserve_case: If True, preserve original case when returning normalized text
             
         Returns:
             Normalized canonical form
         """
-        # Convert to lowercase
+        # Store original for case preservation
+        original_text = symptom_text.strip()
+        
+        # Convert to lowercase for matching
         text = symptom_text.lower().strip()
         
         # Remove special characters except spaces and hyphens
@@ -105,7 +109,14 @@ class SymptomNormalizer:
         
         # Check direct synonym match
         if text in self.synonym_dict:
-            return self.synonym_dict[text]
+            normalized = self.synonym_dict[text]
+            # If preserve_case and the original was an exact match in synonym_dict, keep it
+            if preserve_case and original_text.lower() == text:
+                # Check if the original matches exactly (case-insensitive) the synonym key
+                # If it does, return the original case for acronyms like 'SOB' -> 'SOB' (not normalized form)
+                # But still return the normalized form, just preserve case if possible
+                return normalized
+            return normalized
         
         # Try multi-word synonyms
         words = text.split()
@@ -121,7 +132,7 @@ class SymptomNormalizer:
         
         # Check if already canonical
         if text in self.canonical_forms:
-            return text
+            return original_text if preserve_case else text
         
         # Fuzzy matching (if enabled)
         if self.use_fuzzy_matching:
@@ -129,8 +140,8 @@ class SymptomNormalizer:
             if score >= self.fuzzy_threshold:
                 return best_match
         
-        # Return as-is if no normalization found
-        return text
+        # Return as-is, preserving case if requested
+        return original_text if preserve_case else text
     
     def normalize_to_id(self, symptom_text: str) -> Optional[int]:
         """
@@ -145,17 +156,18 @@ class SymptomNormalizer:
         normalized = self.normalize(symptom_text)
         return self.canonical_to_id.get(normalized)
     
-    def normalize_sequence(self, symptom_texts: List[str]) -> List[str]:
+    def normalize_sequence(self, symptom_texts: List[str], preserve_case: bool = False) -> List[str]:
         """
         Normalize a sequence of symptoms.
         
         Args:
             symptom_texts: List of symptom descriptions
+            preserve_case: If True, preserve original case when possible
             
         Returns:
             List of normalized symptoms
         """
-        return [self.normalize(text) for text in symptom_texts]
+        return [self.normalize(text, preserve_case=preserve_case) for text in symptom_texts]
     
     def normalize_sequence_to_ids(
         self,

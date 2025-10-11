@@ -450,6 +450,129 @@ class TestActiveLearning(unittest.TestCase):
         # Original symptoms should remain
         self.assertEqual(new_symptoms[0].item(), 1)
         self.assertEqual(new_symptoms[1].item(), 5)
+    
+    def test_already_queried_parameter(self):
+        """Test already_queried parameter prevents duplicate recommendations."""
+        # Get initial recommendations
+        initial_recs = self.learner.query_next_symptom(
+            self.symptoms,
+            method='entropy',
+            top_k=5,
+            n_samples=5
+        )
+        
+        # Extract symptom IDs from initial recommendations
+        initial_ids = {rec['symptom_id'] for rec in initial_recs}
+        
+        # Query again with already_queried set
+        filtered_recs = self.learner.query_next_symptom(
+            self.symptoms,
+            method='entropy',
+            top_k=5,
+            n_samples=5,
+            already_queried=initial_ids
+        )
+        
+        # No overlap should exist
+        filtered_ids = {rec['symptom_id'] for rec in filtered_recs}
+        overlap = initial_ids & filtered_ids
+        self.assertEqual(len(overlap), 0, f"Found overlapping IDs: {overlap}")
+    
+    def test_already_queried_in_batch_mode(self):
+        """Test already_queried parameter in batch query mode."""
+        already_queried = {10, 11, 12}
+        
+        recommendations = self.learner.query_next_k_symptoms(
+            self.symptoms,
+            k=3,
+            method='entropy',
+            n_samples=5,
+            batch_mode='independent',
+            already_queried=already_queried
+        )
+        
+        # None of the recommendations should be in already_queried
+        for rec in recommendations:
+            self.assertNotIn(rec['symptom_id'], already_queried)
+
+
+class TestSymptomNormalizationCasePreservation(unittest.TestCase):
+    """Test preserve_case parameter in symptom normalization."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        self.normalizer = SymptomNormalizer()
+    
+    def test_preserve_case_with_acronyms(self):
+        """Test that preserve_case maintains case for unknown terms."""
+        # For unknown terms, case should be preserved
+        result_preserved = self.normalizer.normalize('NewSymptom', preserve_case=True)
+        result_default = self.normalizer.normalize('NewSymptom', preserve_case=False)
+        
+        # With preserve_case, original case should be kept for unknown terms
+        self.assertEqual(result_preserved, 'NewSymptom')
+        # Without preserve_case, it should be lowercased
+        self.assertEqual(result_default, 'newsymptom')
+    
+    def test_preserve_case_with_known_acronym(self):
+        """Test normalize with known acronym."""
+        # Known acronyms get normalized to their canonical form
+        result = self.normalizer.normalize('SOB', preserve_case=True)
+        # Should normalize to canonical form
+        self.assertEqual(result, 'shortness of breath')
+    
+    def test_preserve_case_sequence(self):
+        """Test preserve_case in sequence normalization."""
+        symptoms = ['SOB', 'NewSymptom', 'Headache']
+        
+        # Without preserve_case
+        normalized_default = self.normalizer.normalize_sequence(symptoms, preserve_case=False)
+        self.assertEqual(normalized_default[1], 'newsymptom')
+        
+        # With preserve_case
+        normalized_preserved = self.normalizer.normalize_sequence(symptoms, preserve_case=True)
+        self.assertEqual(normalized_preserved[1], 'NewSymptom')
+
+
+class TestConfigValidatorWarningsClear(unittest.TestCase):
+    """Test that ConfigValidator properly clears warnings between validations."""
+    
+    def test_warnings_clear_between_validations(self):
+        """Test warnings don't accumulate across multiple validations."""
+        from brism.config_validator import ConfigValidator
+        
+        validator = ConfigValidator(strict=False)
+        
+        # First validation with unknown key
+        config1 = {
+            'symptom_vocab_size': 1000,
+            'icd_vocab_size': 500,
+            'unknown_key1': 'value1',
+        }
+        validator.validate_config_dict(config1)
+        warnings_count_1 = len(validator.warnings)
+        self.assertEqual(warnings_count_1, 1)
+        
+        # Second validation with different unknown key
+        config2 = {
+            'symptom_vocab_size': 1000,
+            'icd_vocab_size': 500,
+            'unknown_key2': 'value2',
+        }
+        validator.validate_config_dict(config2)
+        warnings_count_2 = len(validator.warnings)
+        # Should only have 1 warning, not 2
+        self.assertEqual(warnings_count_2, 1)
+        
+        # Third validation with no unknown keys
+        config3 = {
+            'symptom_vocab_size': 1000,
+            'icd_vocab_size': 500,
+        }
+        validator.validate_config_dict(config3)
+        warnings_count_3 = len(validator.warnings)
+        # Should have 0 warnings
+        self.assertEqual(warnings_count_3, 0)
 
 
 if __name__ == '__main__':
