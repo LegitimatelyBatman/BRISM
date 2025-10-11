@@ -174,6 +174,122 @@ BRISMLoss(
 - ✅ Confidence intervals on predictions
 - ✅ Alternating batch training
 - ✅ Comprehensive unit tests
+- ✅ **NEW: Attention-based symptom encoding** - Self-attention layer for learning symptom importance
+- ✅ **NEW: ICD-10 hierarchical loss** - Tree-based distance penalty for hierarchically similar codes
+- ✅ **NEW: Medical data loaders** - MIMIC-III/IV format support with patient-level splits
+- ✅ **NEW: Model checkpointing** - Automatic best model saving with resume capability
+- ✅ **NEW: Early stopping** - Configurable patience for preventing overfitting
+
+## New Features (v0.2.0)
+
+### 1. Attention-Based Symptom Encoding
+
+Replace mean pooling with self-attention to learn which symptoms are most diagnostically relevant:
+
+```python
+config = BRISMConfig(
+    symptom_vocab_size=1000,
+    icd_vocab_size=500,
+    use_attention=True  # Enable attention mechanism
+)
+model = BRISM(config)
+```
+
+The attention layer learns weights over the symptom sequence, focusing on the most important symptoms for diagnosis.
+
+### 2. ICD-10 Hierarchical Loss
+
+Use hierarchical ICD code structure to reduce loss penalty for predictions in the same category:
+
+```python
+from brism import ICDHierarchy, BRISMLoss
+
+# Create hierarchy from YAML config
+icd_hierarchy = ICDHierarchy(icd_vocab_size=500)
+icd_hierarchy.build_from_yaml('config/icd_codes.yaml')
+
+# Use hierarchical loss
+loss_fn = BRISMLoss(
+    kl_weight=0.1,
+    cycle_weight=1.0,
+    icd_hierarchy=icd_hierarchy,
+    hierarchical_weight=0.3,  # 30% hierarchical, 70% standard CE
+    hierarchical_temperature=1.0
+)
+```
+
+See `config/icd_codes.yaml` for ICD code mapping format. The hierarchical loss gives smaller penalties when predictions are in the same category (e.g., both diabetes codes).
+
+### 3. Medical Data Loaders
+
+Process MIMIC-III/IV format data with proper patient-level splits:
+
+```python
+from brism import load_mimic_data
+
+# Load and preprocess MIMIC data
+train_dataset, val_dataset, test_dataset, preprocessor = load_mimic_data(
+    diagnoses_path='data/diagnoses_icd.csv',
+    notes_path='data/noteevents.csv',
+    max_symptom_length=50,
+    train_ratio=0.7,
+    val_ratio=0.15,
+    test_ratio=0.15
+)
+
+# Features:
+# - ICD-9 to ICD-10 conversion
+# - Patient-level splits (no data leakage)
+# - Clinical note tokenization
+# - Missing data handling
+```
+
+### 4. Model Checkpointing and Early Stopping
+
+Train with automatic checkpointing and early stopping:
+
+```python
+from brism import train_brism, load_checkpoint
+
+# Train with checkpointing and early stopping
+history = train_brism(
+    model=model,
+    train_loader=train_loader,
+    optimizer=optimizer,
+    loss_fn=loss_fn,
+    num_epochs=100,
+    device=device,
+    val_loader=val_loader,
+    checkpoint_dir='./checkpoints',     # Enable checkpointing
+    early_stopping_patience=5,          # Stop if no improvement for 5 epochs
+    save_best_only=True                 # Only save best model
+)
+
+# Resume from checkpoint
+checkpoint = load_checkpoint(
+    'checkpoints/best_model.pt',
+    model=model,
+    optimizer=optimizer,
+    scheduler=scheduler,
+    device=device
+)
+print(f"Resumed from epoch {checkpoint['epoch']}")
+```
+
+## Advanced Example
+
+See `example_advanced.py` for a comprehensive demonstration of all new features:
+
+```bash
+python example_advanced.py
+```
+
+This example shows:
+- Attention-based symptom encoding
+- Hierarchical ICD loss
+- Medical data preprocessing
+- Checkpointing and early stopping
+- Resume from checkpoint
 
 ## License
 
