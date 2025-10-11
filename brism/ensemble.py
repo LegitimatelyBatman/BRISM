@@ -94,7 +94,10 @@ class BRISMEnsemble:
         symptoms: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, Dict]:
         """
-        Predict using true ensemble of models.
+        Predict using true ensemble of models with incremental statistics.
+        
+        This implementation computes running mean and variance incrementally
+        to reduce memory usage by a factor equal to the number of models.
         
         Args:
             symptoms: Symptom token IDs [batch_size, seq_len]
@@ -105,41 +108,68 @@ class BRISMEnsemble:
             uncertainty_dict: Dictionary with uncertainty metrics
         """
         device = symptoms.device
-        all_probs = []
+        batch_size = symptoms.size(0)
         
-        # Get predictions from each model
-        for model in self.models:
+        # Initialize accumulators for incremental statistics
+        mean_probs = None
+        m2_probs = None  # Sum of squared differences from mean (for variance)
+        aleatoric_sum = None  # Running sum of entropies
+        
+        # Store only the predictions needed for agreement computation
+        # (top predictions per model, not full probability distributions)
+        top_predictions = []
+        
+        # Get predictions from each model incrementally
+        for idx, model in enumerate(self.models):
             model.to(device)
             model.eval()
             
             with torch.no_grad():
                 icd_logits, _, _ = model.forward_path(symptoms)
                 probs = F.softmax(icd_logits, dim=-1)
-                all_probs.append(probs)
+                
+                # Update running statistics using Welford's algorithm
+                if mean_probs is None:
+                    # First iteration
+                    mean_probs = probs
+                    m2_probs = torch.zeros_like(probs)
+                    aleatoric_sum = torch.zeros(batch_size, device=device)
+                else:
+                    # Incremental update
+                    delta = probs - mean_probs
+                    mean_probs = mean_probs + delta / (idx + 1)
+                    delta2 = probs - mean_probs
+                    m2_probs = m2_probs + delta * delta2
+                
+                # Accumulate aleatoric uncertainty (entropy)
+                entropy = -(probs * torch.log(probs + 1e-10)).sum(dim=-1)
+                aleatoric_sum = aleatoric_sum + entropy
+                
+                # Store only top prediction for agreement (much smaller memory)
+                top_predictions.append(probs.argmax(dim=-1).cpu().numpy())
         
-        # Stack predictions: [n_models, batch_size, icd_vocab_size]
-        all_probs = torch.stack(all_probs)
+        # Compute final statistics
+        # Variance = m2 / n
+        variance_probs = m2_probs / self.n_models
+        std_probs = torch.sqrt(variance_probs + 1e-10)
         
-        # Compute mean and std
-        mean_probs = all_probs.mean(dim=0)
-        std_probs = all_probs.std(dim=0)
-        
-        # Compute uncertainty metrics
-        # Epistemic uncertainty: variance of predictions across models
+        # Epistemic uncertainty: average std across classes
         epistemic_uncertainty = std_probs.mean(dim=-1)
         
-        # Aleatoric uncertainty: average entropy of individual predictions
-        entropies = -(all_probs * torch.log(all_probs + 1e-10)).sum(dim=-1)
-        aleatoric_uncertainty = entropies.mean(dim=0)
+        # Aleatoric uncertainty: average entropy
+        aleatoric_uncertainty = aleatoric_sum / self.n_models
         
         # Total uncertainty: entropy of mean prediction
         total_uncertainty = -(mean_probs * torch.log(mean_probs + 1e-10)).sum(dim=-1)
+        
+        # Store only top predictions for agreement, not all probabilities
+        top_predictions = np.stack(top_predictions)  # [n_models, batch_size]
         
         uncertainty_dict = {
             'epistemic': epistemic_uncertainty.cpu().numpy(),
             'aleatoric': aleatoric_uncertainty.cpu().numpy(),
             'total': total_uncertainty.cpu().numpy(),
-            'all_predictions': all_probs.cpu().numpy()
+            'all_predictions': top_predictions  # Only top predictions, not full distributions
         }
         
         return mean_probs, std_probs, uncertainty_dict
@@ -271,12 +301,19 @@ class BRISMEnsemble:
         Compute ensemble agreement (fraction of models predicting same top class).
         
         Args:
-            predictions: Predictions from all models [n_models, icd_vocab_size]
+            predictions: Top predictions from all models [n_models] (already argmax'ed)
             
         Returns:
             Agreement score [0, 1]
         """
-        top_classes = predictions.argmax(axis=-1)
+        # predictions is already argmax'ed in the new implementation
+        if predictions.ndim == 2:
+            # Old format: [n_models, icd_vocab_size] - take argmax
+            top_classes = predictions.argmax(axis=-1)
+        else:
+            # New format: [n_models] - already argmax'ed
+            top_classes = predictions
+        
         most_common = np.bincount(top_classes).argmax()
         agreement = (top_classes == most_common).mean()
         return float(agreement)

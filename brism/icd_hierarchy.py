@@ -90,9 +90,9 @@ class ICDHierarchy:
         self.distance_matrix = np.zeros((self.icd_vocab_size, self.icd_vocab_size))
         
         for i in range(self.icd_vocab_size):
-            code_i = idx_to_code.get(i, f"UNK_{i}")
+            code_i = idx_to_code.get(i, f"UNKNOWN_IDX{i}")
             for j in range(self.icd_vocab_size):
-                code_j = idx_to_code.get(j, f"UNK_{j}")
+                code_j = idx_to_code.get(j, f"UNKNOWN_IDX{j}")
                 self.distance_matrix[i, j] = self._compute_tree_distance(code_i, code_j)
     
     def build_from_yaml(self, yaml_path: str):

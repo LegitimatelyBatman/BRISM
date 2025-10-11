@@ -131,7 +131,37 @@ def calibrate_temperature(
         model.temperature.data.fill_(10.0)
         optimal_temp = 10.0
     
+    # Validate that calibration improved ECE
+    from .metrics import compute_calibration_metrics
+    
+    # Compute ECE before calibration (with original temperature)
+    model.temperature.data = original_temp.clone()
+    with torch.no_grad():
+        probs_before = F.softmax(all_logits / model.temperature, dim=-1)
+    ece_before = compute_calibration_metrics(
+        probs_before.cpu().numpy(),
+        all_labels.cpu().numpy(),
+        n_bins=10
+    )['ece']
+    
+    # Compute ECE after calibration
+    model.temperature.data.fill_(optimal_temp)
+    with torch.no_grad():
+        probs_after = F.softmax(all_logits / model.temperature, dim=-1)
+    ece_after = compute_calibration_metrics(
+        probs_after.cpu().numpy(),
+        all_labels.cpu().numpy(),
+        n_bins=10
+    )['ece']
+    
+    # Log results
     print(f"Temperature calibration: {original_temp.item():.4f} -> {optimal_temp:.4f}")
+    print(f"ECE: {ece_before:.4f} -> {ece_after:.4f} (improvement: {ece_before - ece_after:.4f})")
+    
+    # Warn if calibration made things worse
+    if ece_after > ece_before:
+        print(f"WARNING: Calibration increased ECE by {ece_after - ece_before:.4f}. "
+              f"Consider keeping original temperature or using more calibration data.")
     
     return optimal_temp
 
