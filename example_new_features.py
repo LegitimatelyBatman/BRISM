@@ -102,8 +102,8 @@ def main():
         icd_vocab_size=50,
         latent_dim=32,
         max_symptom_length=20,
-        use_attention=True,
         mc_samples=20
+        # Attention always enabled in v3.0.0
     )
     model = BRISM(config).to(device)
     print(f"Created BRISM model with {sum(p.numel() for p in model.parameters())} parameters")

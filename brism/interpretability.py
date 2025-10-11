@@ -90,11 +90,11 @@ class IntegratedGradients:
             step_embeds = step_embeds.detach().requires_grad_(True)
             
             # Apply temporal encoding (always enabled)
-            step_embeds = self.model.temporal_encoding(step_embeds, None)
+            step_embeds_temporal = self.model.temporal_encoding(step_embeds, None)
             
             # Aggregate symptoms with attention (always enabled)
             mask = (symptoms != 0).float()
-            aggregated, _ = self.model.symptom_attention(step_embeds, mask)
+            aggregated, _ = self.model.symptom_attention(step_embeds_temporal, mask)
             
             # Encode to latent
             mu, logvar = self.model.symptom_encoder(aggregated)
@@ -109,11 +109,11 @@ class IntegratedGradients:
             else:
                 target_icd_val = target_icd
             
-            # Compute gradients w.r.t. target class
+            # Compute gradients w.r.t. target class and input embeddings
             target_logits = icd_logits[:, target_icd_val].sum()
             target_logits.backward()
             
-            # Store gradients
+            # Store gradients w.r.t. original step_embeds
             if step_embeds.grad is not None:
                 gradients.append(step_embeds.grad.detach().clone())
             else:

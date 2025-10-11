@@ -74,12 +74,12 @@ def main():
         decoder_hidden_dim=256,
         max_symptom_length=50,
         dropout_rate=0.2,
-        mc_samples=20,
-        use_attention=True  # NEW: Enable attention-based aggregation
+        mc_samples=20
+        # Attention and temporal encoding are always enabled in v3.0.0
     )
     
     model = BRISM(config)
-    print(f"Model created with attention: {config.use_attention}")
+    print(f"Model created with attention (always enabled)")
     print(f"Total parameters: {sum(p.numel() for p in model.parameters()):,}")
     print()
     
