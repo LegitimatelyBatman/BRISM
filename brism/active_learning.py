@@ -47,7 +47,8 @@ class ActiveLearner:
         candidate_symptoms: Optional[List[int]] = None,
         method: str = 'entropy',
         top_k: int = 5,
-        n_samples: int = 20
+        n_samples: int = 20,
+        already_queried: Optional[Set[int]] = None
     ) -> List[Dict]:
         """
         Recommend next symptoms to query based on information gain.
@@ -58,6 +59,7 @@ class ActiveLearner:
             method: Query strategy ('entropy', 'bald', 'variance', 'eig')
             top_k: Number of symptoms to recommend
             n_samples: Number of MC samples for uncertainty estimation
+            already_queried: Set of symptom IDs that have been previously queried (to exclude)
             
         Returns:
             List of recommended symptoms with scores
@@ -72,6 +74,10 @@ class ActiveLearner:
         # Remove symptoms already present
         current_symptom_set = set(current_symptoms.cpu().numpy().tolist())
         candidate_symptoms = [s for s in candidate_symptoms if s not in current_symptom_set]
+        
+        # Remove already queried symptoms if provided
+        if already_queried is not None:
+            candidate_symptoms = [s for s in candidate_symptoms if s not in already_queried]
         
         if len(candidate_symptoms) == 0:
             return []
@@ -120,7 +126,8 @@ class ActiveLearner:
         candidate_symptoms: Optional[List[int]] = None,
         method: str = 'entropy',
         n_samples: int = 20,
-        batch_mode: str = 'joint'
+        batch_mode: str = 'joint',
+        already_queried: Optional[Set[int]] = None
     ) -> List[Dict]:
         """
         Recommend the top k most informative symptoms to query together.
@@ -138,6 +145,7 @@ class ActiveLearner:
                 - 'independent': Select top k independently (fastest)
                 - 'joint': Consider joint information gain (more accurate but slower)
                 - 'greedy': Greedy sequential selection (balanced)
+            already_queried: Set of symptom IDs that have been previously queried (to exclude)
             
         Returns:
             List of k recommended symptoms with individual and joint scores
@@ -153,6 +161,10 @@ class ActiveLearner:
         current_symptom_set = set(current_symptoms.cpu().numpy().tolist())
         candidate_symptoms = [s for s in candidate_symptoms if s not in current_symptom_set]
         
+        # Remove already queried symptoms if provided
+        if already_queried is not None:
+            candidate_symptoms = [s for s in candidate_symptoms if s not in already_queried]
+        
         if len(candidate_symptoms) == 0:
             return []
         
@@ -162,7 +174,7 @@ class ActiveLearner:
         if batch_mode == 'independent':
             # Fastest: just return top k from single query
             return self.query_next_symptom(
-                current_symptoms, candidate_symptoms, method, k, n_samples
+                current_symptoms, candidate_symptoms, method, k, n_samples, already_queried
             )
         
         elif batch_mode == 'greedy':
