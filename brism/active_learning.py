@@ -113,6 +113,165 @@ class ActiveLearner:
         
         return recommendations
     
+    def query_next_k_symptoms(
+        self,
+        current_symptoms: torch.Tensor,
+        k: int = 3,
+        candidate_symptoms: Optional[List[int]] = None,
+        method: str = 'entropy',
+        n_samples: int = 20,
+        batch_mode: str = 'joint'
+    ) -> List[Dict]:
+        """
+        Recommend the top k most informative symptoms to query together.
+        
+        This is more practical for clinical workflows where multiple questions
+        can be asked simultaneously, rather than one at a time.
+        
+        Args:
+            current_symptoms: Current symptom sequence [seq_len]
+            k: Number of symptoms to recommend
+            candidate_symptoms: List of candidate symptom IDs to consider
+            method: Query strategy ('entropy', 'bald', 'variance', 'eig')
+            n_samples: Number of MC samples for uncertainty estimation
+            batch_mode: Selection strategy:
+                - 'independent': Select top k independently (fastest)
+                - 'joint': Consider joint information gain (more accurate but slower)
+                - 'greedy': Greedy sequential selection (balanced)
+            
+        Returns:
+            List of k recommended symptoms with individual and joint scores
+        """
+        device = next(self.model.parameters()).device
+        current_symptoms = current_symptoms.to(device)
+        
+        # Get all possible symptoms if not specified
+        if candidate_symptoms is None:
+            candidate_symptoms = list(range(1, self.model.config.symptom_vocab_size))
+        
+        # Remove symptoms already present
+        current_symptom_set = set(current_symptoms.cpu().numpy().tolist())
+        candidate_symptoms = [s for s in candidate_symptoms if s not in current_symptom_set]
+        
+        if len(candidate_symptoms) == 0:
+            return []
+        
+        # Limit k to available candidates
+        k = min(k, len(candidate_symptoms))
+        
+        if batch_mode == 'independent':
+            # Fastest: just return top k from single query
+            return self.query_next_symptom(
+                current_symptoms, candidate_symptoms, method, k, n_samples
+            )
+        
+        elif batch_mode == 'greedy':
+            # Greedy sequential selection
+            selected = []
+            remaining_candidates = candidate_symptoms.copy()
+            current = current_symptoms
+            
+            for _ in range(k):
+                # Query best symptom given current state
+                recommendations = self.query_next_symptom(
+                    current, remaining_candidates, method, 1, n_samples
+                )
+                
+                if not recommendations:
+                    break
+                
+                best = recommendations[0]
+                selected.append(best)
+                
+                # Update current symptoms
+                current = self._add_symptom(current, best['symptom_id'])
+                
+                # Remove from candidates
+                remaining_candidates.remove(best['symptom_id'])
+            
+            # Add batch score (joint information gain)
+            if selected:
+                final_symptoms = current
+                joint_score = self._compute_information_gain(
+                    current_symptoms, final_symptoms, n_samples
+                )
+                for item in selected:
+                    item['joint_score'] = float(joint_score)
+            
+            return selected
+        
+        elif batch_mode == 'joint':
+            # Most accurate: evaluate all combinations of size k
+            # For large k or candidate sets, this can be slow
+            if len(candidate_symptoms) > 50 or k > 5:
+                # Fallback to greedy for large problems
+                return self.query_next_k_symptoms(
+                    current_symptoms, k, candidate_symptoms, method, n_samples, 'greedy'
+                )
+            
+            from itertools import combinations
+            
+            best_score = -float('inf')
+            best_combo = None
+            
+            # Evaluate all combinations
+            for combo in combinations(candidate_symptoms, k):
+                # Create symptom sequence with all symptoms in combo
+                augmented = current_symptoms
+                for symptom_id in combo:
+                    augmented = self._add_symptom(augmented, symptom_id)
+                
+                # Compute joint information gain
+                score = self._compute_information_gain(
+                    current_symptoms, augmented, n_samples
+                )
+                
+                if score > best_score:
+                    best_score = score
+                    best_combo = combo
+            
+            # Format results
+            recommendations = []
+            for symptom_id in best_combo:
+                recommendations.append({
+                    'symptom_id': symptom_id,
+                    'symptom_name': self.symptom_vocab.get(symptom_id, f"Symptom_{symptom_id}"),
+                    'joint_score': float(best_score),
+                    'method': f'{method}_joint'
+                })
+            
+            return recommendations
+        
+        else:
+            raise ValueError(f"Unknown batch_mode: {batch_mode}")
+    
+    def _compute_information_gain(
+        self,
+        symptoms_before: torch.Tensor,
+        symptoms_after: torch.Tensor,
+        n_samples: int
+    ) -> float:
+        """
+        Compute information gain from adding symptoms.
+        
+        Args:
+            symptoms_before: Symptoms before adding [seq_len]
+            symptoms_after: Symptoms after adding [seq_len]
+            n_samples: Number of MC samples
+            
+        Returns:
+            Information gain (reduction in entropy)
+        """
+        entropy_before = self._compute_prediction_entropy(
+            symptoms_before.unsqueeze(0), n_samples
+        )[0]
+        
+        entropy_after = self._compute_prediction_entropy(
+            symptoms_after.unsqueeze(0), n_samples
+        )[0]
+        
+        return entropy_before - entropy_after
+    
     def _entropy_based_selection(
         self,
         current_symptoms: torch.Tensor,

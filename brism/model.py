@@ -240,7 +240,8 @@ class SequenceDecoder(nn.Module):
         beam_width: int = 5, 
         temperature: float = 1.0,
         length_penalty: float = 1.0,
-        max_length: Optional[int] = None
+        max_length: Optional[int] = None,
+        max_batch_size: Optional[int] = None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Generate sequences using beam search.
@@ -251,12 +252,43 @@ class SequenceDecoder(nn.Module):
             temperature: Temperature for softmax (higher = more diverse)
             length_penalty: Penalty for sequence length (>1 favors longer sequences)
             max_length: Maximum sequence length (defaults to self.max_length)
+            max_batch_size: Maximum batch size to process at once (for memory efficiency).
+                          If None, processes all batches together. If set, processes in chunks.
             
         Returns:
             sequences: Top beam_width sequences [batch_size, beam_width, seq_len]
             scores: Log probabilities for each sequence [batch_size, beam_width]
             lengths: Actual lengths of sequences [batch_size, beam_width]
         """
+        # If max_batch_size is set and batch_size exceeds it, process in chunks
+        batch_size = z.size(0)
+        
+        if max_batch_size is not None and batch_size > max_batch_size:
+            # Process in chunks to reduce memory usage
+            all_sequences = []
+            all_scores = []
+            all_lengths = []
+            
+            for i in range(0, batch_size, max_batch_size):
+                batch_end = min(i + max_batch_size, batch_size)
+                z_chunk = z[i:batch_end]
+                
+                # Recursively call beam_search on chunk (without max_batch_size to avoid infinite recursion)
+                chunk_sequences, chunk_scores, chunk_lengths = self.beam_search(
+                    z_chunk, beam_width, temperature, length_penalty, max_length, max_batch_size=None
+                )
+                
+                all_sequences.append(chunk_sequences)
+                all_scores.append(chunk_scores)
+                all_lengths.append(chunk_lengths)
+            
+            # Concatenate results
+            sequences = torch.cat(all_sequences, dim=0)
+            scores = torch.cat(all_scores, dim=0)
+            lengths = torch.cat(all_lengths, dim=0)
+            
+            return sequences, scores, lengths
+        
         # Input validation
         assert z.dim() == 2, f"Expected z to be 2D tensor [batch_size, latent_dim], got shape {z.shape}"
         assert beam_width > 0, f"beam_width must be positive, got {beam_width}"

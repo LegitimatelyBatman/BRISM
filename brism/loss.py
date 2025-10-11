@@ -157,6 +157,77 @@ class BRISMLoss(nn.Module):
         self.contrastive_weight = contrastive_weight
         self.contrastive_margin = contrastive_margin
         self.contrastive_temperature = contrastive_temperature
+    
+    @staticmethod
+    def suggest_weights(
+        recon_scale: float = 1.0,
+        kl_scale: float = 0.01,
+        cycle_scale: float = 1.0,
+        hierarchical_scale: float = 0.3,
+        contrastive_scale: float = 0.1,
+        vocab_size_ratio: float = 1.0
+    ) -> Dict[str, float]:
+        """
+        Suggest initial weight values based on training data statistics.
+        
+        This helper provides reasonable starting weights for the different loss components
+        based on their typical scales. Users should fine-tune these based on their specific
+        data and task requirements.
+        
+        Args:
+            recon_scale: Scale of reconstruction loss (typically 1.0-5.0 for cross-entropy)
+            kl_scale: Scale of KL divergence (typically 0.01-1.0, smaller for larger latent dims)
+            cycle_scale: Scale of cycle consistency loss (typically 0.1-2.0)
+            hierarchical_scale: Scale of hierarchical loss (typically 0.1-1.0)
+            contrastive_scale: Scale of contrastive loss (typically 0.01-0.5)
+            vocab_size_ratio: Ratio of symptom_vocab_size / icd_vocab_size (affects reconstruction balance)
+        
+        Returns:
+            Dictionary with suggested weight values:
+                - kl_weight: Weight for KL divergence (typically 0.1)
+                - cycle_weight: Weight for cycle consistency (typically 1.0)
+                - hierarchical_weight: Weight for hierarchical loss (typically 0.3)
+                - contrastive_weight: Weight for contrastive loss (typically 0.5)
+        
+        Example:
+            >>> # For a model with symptom_vocab=1000, icd_vocab=500
+            >>> suggested = BRISMLoss.suggest_weights(
+            ...     recon_scale=3.5,  # Observed avg reconstruction loss
+            ...     kl_scale=0.05,    # Observed avg KL divergence
+            ...     vocab_size_ratio=2.0  # 1000/500
+            ... )
+            >>> loss_fn = BRISMLoss(
+            ...     kl_weight=suggested['kl_weight'],
+            ...     cycle_weight=suggested['cycle_weight'],
+            ...     hierarchical_weight=suggested['hierarchical_weight'],
+            ...     contrastive_weight=suggested['contrastive_weight']
+            ... )
+        """
+        # Balance reconstruction and KL divergence
+        # Goal: KL term should be ~10% of reconstruction term initially
+        kl_weight = (recon_scale * 0.1) / max(kl_scale, 1e-6)
+        kl_weight = max(0.01, min(kl_weight, 1.0))  # Clip to reasonable range
+        
+        # Cycle consistency should have similar scale to reconstruction
+        cycle_weight = recon_scale / max(cycle_scale, 1e-6)
+        cycle_weight = max(0.1, min(cycle_weight, 5.0))  # Clip to reasonable range
+        
+        # Hierarchical loss weight (relative to reconstruction)
+        # For large vocab, reduce hierarchical weight
+        hierarchical_weight = hierarchical_scale * min(1.0, 500.0 / (vocab_size_ratio * 500.0))
+        hierarchical_weight = max(0.1, min(hierarchical_weight, 0.5))
+        
+        # Contrastive loss should be smaller than reconstruction
+        # Goal: contrastive term should be ~20-50% of reconstruction term
+        contrastive_weight = (recon_scale * 0.35) / max(contrastive_scale, 1e-6)
+        contrastive_weight = max(0.1, min(contrastive_weight, 1.0))
+        
+        return {
+            'kl_weight': round(kl_weight, 3),
+            'cycle_weight': round(cycle_weight, 3),
+            'hierarchical_weight': round(hierarchical_weight, 3),
+            'contrastive_weight': round(contrastive_weight, 3)
+        }
         
     def kl_divergence(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
