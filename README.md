@@ -1,13 +1,17 @@
-# BRISM v3.0.0
+# BRISM v3.1.0
 Bayesian Reciprocal ICD-Symptom Model
 
 A deep learning model for bidirectional mapping between medical symptoms and ICD diagnosis codes with uncertainty quantification.
 
-> **⚠️ Version 3.0.0 Breaking Changes**: This is a major refactoring release. See [BREAKING_CHANGES.md](BREAKING_CHANGES.md) for migration guide from v0.2.0.
+## What's New in v3.1.0
 
-## What's New in v3.0.0
+**Documentation & Infrastructure:**
+- ✅ Enhanced IMPLEMENTATION.md with detailed non-technical explanations
+- ✅ Synchronized setup.py and requirements.txt dependencies
+- ✅ Consolidated test suite for better maintainability
+- ✅ Updated all documentation to reflect current codebase
 
-**Simplified & Streamlined:**
+**All v3.0.0 features remain:**
 - ✅ Attention-based aggregation (always enabled)
 - ✅ Temporal encoding for symptom sequences (always enabled)
 - ✅ Focal loss for handling class imbalance (always enabled)
@@ -15,8 +19,6 @@ A deep learning model for bidirectional mapping between medical symptoms and ICD
 - ✅ Hierarchical ICD loss (enabled by default, weight=0.3)
 - ✅ Temperature scaling for calibration (always enabled)
 - ✅ Beam search for generation (always enabled)
-
-All "optional" flags have been removed. Advanced features are now standard.
 
 ## Overview
 
@@ -83,14 +85,14 @@ import torch
 from brism import BRISM, BRISMConfig, train_brism, diagnose_with_confidence
 from brism.loss import BRISMLoss
 
-# Configure model (v3.0.0 - simplified configuration)
+# Configure model (v3.1.0 - simplified configuration)
 config = BRISMConfig(
     symptom_vocab_size=1000,
     icd_vocab_size=500,
     latent_dim=64,
     mc_samples=20
     # Attention, temporal encoding, and other advanced features
-    # are ALWAYS enabled in v3.0.0 - no flags needed!
+    # are ALWAYS enabled in v3.0.0+ - no flags needed!
 )
 
 # Initialize model
@@ -99,7 +101,7 @@ model = BRISM(config)
 # Training (with your data)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-# Loss function with new v3.0.0 defaults
+# Loss function with v3.0.0+ defaults
 loss_fn = BRISMLoss(
     kl_weight=0.1, 
     cycle_weight=1.0,
@@ -147,21 +149,15 @@ This ensures both directions and cycle consistency are jointly optimized.
 
 ## Example Usage
 
-Run the example scripts to see the model in action with synthetic data:
+Run the comprehensive example to see the model in action with synthetic data:
 
 ```bash
-# Basic example with synthetic data
+# Comprehensive example demonstrating all BRISM features
 python example.py
-
-# Comprehensive example showing all v3.0.0 features
-python example_new_features.py
-
-# Enhanced features example (temporal encoding, focal loss, etc.)
-python example_enhanced_features.py
 ```
 
-These demonstrate:
-- Model initialization and training with new v3.0.0 defaults
+This demonstrates:
+- Model initialization and training with v3.0.0+ defaults
 - Diagnosis with confidence intervals
 - Interpretability tools (attention visualization, integrated gradients)
 - Beam search for symptom generation
@@ -174,9 +170,9 @@ These demonstrate:
 Run unit tests:
 
 ```bash
-python -m pytest tests/
-# or
 python -m unittest discover tests/
+# or
+python -m pytest tests/  # if pytest is installed
 ```
 
 ## Model Configuration

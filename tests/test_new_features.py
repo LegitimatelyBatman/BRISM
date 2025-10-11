@@ -575,5 +575,85 @@ class TestConfigValidatorWarningsClear(unittest.TestCase):
         self.assertEqual(warnings_count_3, 0)
 
 
+class TestInterpretabilityBugFixes(unittest.TestCase):
+    """Test bug fixes in interpretability.py"""
+    
+    def test_integrated_gradients_numerical_stability(self):
+        """Test that integrated gradients warns when input equals baseline."""
+        import warnings
+        from brism import BRISM, BRISMConfig
+        from brism.interpretability import IntegratedGradients
+        
+        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        model = BRISM(config)
+        ig = IntegratedGradients(model)
+        
+        # Input identical to baseline
+        symptoms = torch.zeros(5, dtype=torch.long)
+        baseline = torch.zeros(5, dtype=torch.long)
+        
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            attributions = ig.attribute(symptoms, baseline=baseline)
+            self.assertGreater(len(w), 0, "Warning should be issued when input equals baseline")
+            self.assertIn("nearly identical", str(w[0].message).lower())
+            # Should return zeros
+            self.assertTrue(torch.allclose(attributions, torch.zeros_like(attributions)))
+    
+    def test_interpretability_gradient_cleanup(self):
+        """Test that interpretability functions clean up gradients properly."""
+        from brism import BRISM, BRISMConfig
+        from brism.interpretability import IntegratedGradients, AttentionVisualization
+        
+        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        model = BRISM(config)
+        
+        # Test IntegratedGradients
+        ig = IntegratedGradients(model)
+        symptoms = torch.tensor([1, 2, 3, 0, 0])
+        
+        attributions = ig.attribute(symptoms, n_steps=5)
+        
+        # Check no lingering gradients
+        has_grads = any(p.grad is not None for p in model.parameters() if p.requires_grad)
+        self.assertFalse(has_grads, "IntegratedGradients should clean up gradients")
+        
+        # Test AttentionVisualization
+        viz = AttentionVisualization(model)
+        importance = viz.get_gradient_based_importance(symptoms)
+        
+        has_grads = any(p.grad is not None for p in model.parameters() if p.requires_grad)
+        self.assertFalse(has_grads, "AttentionVisualization should clean up gradients")
+
+
+class TestEnsembleBugFixes(unittest.TestCase):
+    """Test bug fixes in ensemble.py"""
+    
+    def test_pseudo_ensemble_minimum_n_models(self):
+        """Test that pseudo-ensemble requires n_models >= 2."""
+        from brism import BRISMConfig
+        from brism.ensemble import BRISMEnsemble
+        
+        config = BRISMConfig(symptom_vocab_size=100, icd_vocab_size=50, latent_dim=32)
+        
+        # Should work with n_models >= 2
+        ensemble = BRISMEnsemble(
+            config=config,
+            n_models=2,
+            use_pseudo_ensemble=True
+        )
+        self.assertEqual(ensemble.n_models, 2)
+        
+        # Should raise error with n_models < 2
+        with self.assertRaises(ValueError) as context:
+            BRISMEnsemble(
+                config=config,
+                n_models=1,
+                use_pseudo_ensemble=True
+            )
+        self.assertIn("n_models >= 2", str(context.exception))
+        self.assertIn("standard deviation will always be zero", str(context.exception))
+
+
 if __name__ == '__main__':
     unittest.main()
