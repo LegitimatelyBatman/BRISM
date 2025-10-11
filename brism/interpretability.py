@@ -65,6 +65,22 @@ class IntegratedGradients:
         if baseline is None:
             baseline = torch.zeros_like(symptoms)
         
+        # Check numerical stability: if baseline is very similar to input
+        # the integrated gradients will be meaningless
+        input_diff = (symptoms.float() - baseline.float()).abs().sum().item()
+        if input_diff < 1e-6:
+            import warnings
+            warnings.warn(
+                f"Input and baseline are nearly identical (L1 difference: {input_diff:.2e}). "
+                f"Integrated gradients attribution will be meaningless. "
+                f"Returning zeros.",
+                UserWarning
+            )
+            if squeeze_output:
+                return torch.zeros(seq_len, device=device)
+            else:
+                return torch.zeros(batch_size, seq_len, device=device)
+        
         # Get embeddings for symptoms and baseline
         self.model.eval()
         symptom_embeds = self.model.symptom_embedding(symptoms)

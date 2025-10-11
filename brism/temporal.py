@@ -91,6 +91,18 @@ class TemporalEncoding(nn.Module):
             if timestamps.dim() == 2:
                 timestamps = timestamps.unsqueeze(-1)  # [B, L, 1]
             
+            # Validate timestamp values to prevent overflow or extreme values
+            # Check for reasonable range (e.g., timestamps in years should be < 10000)
+            max_timestamp = timestamps.abs().max().item()
+            if max_timestamp > 1e6:  # Reasonable upper bound
+                import warnings
+                warnings.warn(
+                    f"Timestamp values are very large (max: {max_timestamp:.2e}). "
+                    f"This may cause overflow or extreme encoding values. "
+                    f"Consider normalizing timestamps to a reasonable range.",
+                    UserWarning
+                )
+            
             # Project timestamps to embedding dimension
             time_encoding = self.time_projection(timestamps)
             embeddings = embeddings + time_encoding
