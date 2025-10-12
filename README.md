@@ -367,6 +367,41 @@ train_dataset, val_dataset, test_dataset, preprocessor = load_mimic_data(
 # - Missing data handling
 ```
 
+### 3.1 Training Data Format
+
+`load_mimic_data` expects two **CSV** files that mirror the structure of the official MIMIC-III/IV tables:
+
+| File | Required columns | Description |
+| ---- | ---------------- | ----------- |
+| `diagnoses_icd.csv` | `hadm_id` (or `subject_id`), `icd_code`, optional `icd_version` | One row per diagnosis code. ICD-9 codes are automatically mapped to ICD-10 when `icd_version == 9`. |
+| `noteevents.csv` | `hadm_id` (or `subject_id`), `text` | Free-text clinical notes that are tokenized into symptom tokens. Additional columns (e.g., timestamps) are ignored. |
+
+At minimum, each admission (or subject) should appear in **both** files so the preprocessor can align symptoms with diagnoses. A tiny example looks like this:
+
+`diagnoses_icd.csv`
+
+```csv
+hadm_id,icd_code,icd_version
+1001,E11.9,10
+1002,250.00,9
+```
+
+`noteevents.csv`
+
+```csv
+hadm_id,text
+1001,"Patient reports fever, cough, and fatigue."
+1002,"Complains of polyuria and increased thirst over two weeks."
+```
+
+When you call `load_mimic_data`, BRISM will:
+
+- Normalize ICD codes (including ICD-9 → ICD-10 conversion).
+- Tokenize the note text into symptom tokens and truncate/pad to `max_symptom_length`.
+- Build vocabularies based on the observed symptoms/diagnoses and produce PyTorch datasets ready for `DataLoader` usage.
+
+If you are using a custom dataset, export the same information to CSV with the required columns and file names. For other storage formats (Parquet, SQL, etc.), load them into a pandas `DataFrame` and save as CSV before passing the paths to `load_mimic_data`.
+
 ### 4. Model Checkpointing and Early Stopping
 
 Train with automatic checkpointing and early stopping:
