@@ -83,6 +83,16 @@ class TemporalEncoding(nn.Module):
             
         elif self.encoding_type == 'timestamp':
             if timestamps is None:
+                # Issue warning when timestamp encoding is configured but no timestamps provided
+                import warnings
+                warnings.warn(
+                    "Temporal encoding type is set to 'timestamp' but no timestamps were provided. "
+                    "Falling back to sequential positions (0, 1, 2, ...). "
+                    "If this is intentional, consider using encoding_type='positional' instead. "
+                    "To suppress this warning, explicitly pass timestamps or change encoding_type.",
+                    UserWarning,
+                    stacklevel=2
+                )
                 # Default to positional if no timestamps provided
                 positions = torch.arange(seq_len, device=embeddings.device).float()
                 timestamps = positions.unsqueeze(0).expand(batch_size, -1)
