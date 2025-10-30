@@ -20,7 +20,7 @@ def diagnose_with_confidence(
 ) -> Dict:
     """
     Diagnose from symptoms with confidence intervals using Monte Carlo dropout.
-    
+
     Args:
         model: Trained BRISM model
         symptoms: Symptom token IDs [batch_size, seq_len] or [seq_len]
@@ -28,7 +28,7 @@ def diagnose_with_confidence(
         n_samples: Number of MC samples (defaults to model config)
         confidence_level: Confidence level for intervals (default 0.95)
         top_k: Number of top diagnoses to return
-        
+
     Returns:
         Dictionary containing:
             - predictions: List of top-k ICD predictions with probabilities
@@ -37,8 +37,16 @@ def diagnose_with_confidence(
             - raw_probabilities: Full probability distribution with std
     """
     model.to(device)
+
+    # Validate and convert symptoms to tensor if needed
+    if not isinstance(symptoms, torch.Tensor):
+        try:
+            symptoms = torch.tensor(symptoms, dtype=torch.long)
+        except (TypeError, ValueError) as e:
+            raise TypeError(f"symptoms must be a torch.Tensor or convertible to one: {e}")
+
     symptoms = symptoms.to(device)
-    
+
     # Add batch dimension if needed
     if symptoms.dim() == 1:
         symptoms = symptoms.unsqueeze(0)

@@ -16,29 +16,32 @@ def compute_class_weights(
 ) -> torch.Tensor:
     """
     Compute inverse frequency weights for class balancing.
-    
+
     Args:
         class_counts: Dictionary mapping class index to count
         num_classes: Total number of classes
         smoothing: Smoothing factor to avoid extreme weights
-        
+
     Returns:
         Class weights tensor [num_classes]
     """
     # Initialize all weights to smoothing value
     weights = torch.ones(num_classes) * smoothing
-    
+
     # Compute total samples
     total_samples = sum(class_counts.values())
-    
+
     # Compute inverse frequency weights
     for class_idx, count in class_counts.items():
+        # Validate class_idx is within bounds
+        if class_idx < 0 or class_idx >= num_classes:
+            raise ValueError(f"class_idx {class_idx} is out of bounds for num_classes={num_classes}")
         if count > 0:
             weights[class_idx] = total_samples / (num_classes * count)
-    
+
     # Normalize weights to have mean of 1.0
     weights = weights / weights.mean()
-    
+
     return weights
 
 
@@ -71,35 +74,48 @@ class FocalLoss(nn.Module):
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
         Compute focal loss.
-        
+
         Args:
             logits: Model predictions [batch_size, num_classes]
             targets: Ground truth labels [batch_size]
-            
+
         Returns:
             Loss value
         """
+        # Validate targets are within bounds
+        num_classes = logits.size(-1)
+        if targets.min() < 0 or targets.max() >= num_classes:
+            raise ValueError(
+                f"targets contain invalid indices: min={targets.min().item()}, "
+                f"max={targets.max().item()}, num_classes={num_classes}"
+            )
+
         # Compute probabilities
         probs = F.softmax(logits, dim=-1)
-        
+
         # Get probability of true class
         batch_size = targets.size(0)
         p_t = probs[torch.arange(batch_size), targets]
-        
+
         # Compute focal term
         focal_term = (1 - p_t) ** self.gamma
-        
+
         # Compute cross-entropy
         ce = F.cross_entropy(logits, targets, reduction='none')
-        
+
         # Apply focal term
         loss = focal_term * ce
-        
+
         # Apply class weights if provided
         if self.alpha is not None:
+            # Validate alpha size matches num_classes
+            if self.alpha.size(0) != num_classes:
+                raise ValueError(
+                    f"alpha size ({self.alpha.size(0)}) does not match num_classes ({num_classes})"
+                )
             alpha_t = self.alpha[targets]
             loss = alpha_t * loss
-        
+
         # Apply reduction
         if self.reduction == 'mean':
             return loss.mean()

@@ -526,10 +526,16 @@ def train_brism(
             global_step += 1
         
         # Average epoch metrics
+        if len(epoch_losses) == 0:
+            raise ValueError(f"No training data processed in epoch {epoch+1}. Check that train_loader is not empty.")
         avg_epoch_loss = sum(epoch_losses) / len(epoch_losses)
         history['train_loss'].append(avg_epoch_loss)
-        
-        epoch_avg_metrics = {k: sum(v) / len(v) for k, v in epoch_metrics.items()}
+
+        epoch_avg_metrics = {}
+        for k, v in epoch_metrics.items():
+            if len(v) == 0:
+                raise ValueError(f"No data for metric '{k}' in epoch {epoch+1}.")
+            epoch_avg_metrics[k] = sum(v) / len(v)
         history['epoch_metrics'].append(epoch_avg_metrics)
         
         logger.info(f"\nEpoch {epoch+1}/{num_epochs} - Average Loss: {avg_epoch_loss:.4f}")

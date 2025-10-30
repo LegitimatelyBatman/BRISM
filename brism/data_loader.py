@@ -282,8 +282,12 @@ class MedicalDataPreprocessor:
                     warnings.warn(f"Could not map ICD-9 code {icd_code} to ICD-10")
                     continue
             else:
-                icd10_code = self.normalizer.normalize_icd10(icd_code)
-            
+                try:
+                    icd10_code = self.normalizer.normalize_icd10(icd_code)
+                except ValueError as e:
+                    warnings.warn(f"Invalid ICD-10 code '{icd_code}': {e}")
+                    continue
+
             # Validate
             if self.normalizer.is_valid_icd10(icd10_code):
                 result[patient_id].append(icd10_code)
@@ -338,8 +342,8 @@ class MedicalDataPreprocessor:
         Returns:
             Tuple of (train_ids, val_ids, test_ids)
         """
-        assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, \
-            "Ratios must sum to 1.0"
+        if abs(train_ratio + val_ratio + test_ratio - 1.0) >= 1e-6:
+            raise ValueError("Ratios must sum to 1.0")
         
         # Shuffle patient IDs
         rng = np.random.RandomState(random_seed)
@@ -372,8 +376,8 @@ class MedicalRecordDataset(Dataset):
             icd_codes: List of encoded ICD codes
             patient_ids: Optional list of patient IDs
         """
-        assert len(symptoms) == len(icd_codes), \
-            "Number of symptoms and ICD codes must match"
+        if len(symptoms) != len(icd_codes):
+            raise ValueError("Number of symptoms and ICD codes must match")
         
         self.symptoms = symptoms
         self.icd_codes = icd_codes

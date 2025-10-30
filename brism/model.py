@@ -290,9 +290,12 @@ class SequenceDecoder(nn.Module):
             return sequences, scores, lengths
         
         # Input validation
-        assert z.dim() == 2, f"Expected z to be 2D tensor [batch_size, latent_dim], got shape {z.shape}"
-        assert beam_width > 0, f"beam_width must be positive, got {beam_width}"
-        assert temperature > 0, f"temperature must be positive, got {temperature}"
+        if z.dim() != 2:
+            raise ValueError(f"Expected z to be 2D tensor [batch_size, latent_dim], got shape {z.shape}")
+        if beam_width <= 0:
+            raise ValueError(f"beam_width must be positive, got {beam_width}")
+        if temperature <= 0:
+            raise ValueError(f"temperature must be positive, got {temperature}")
         
         batch_size = z.size(0)
         device = z.device
@@ -316,8 +319,9 @@ class SequenceDecoder(nn.Module):
         h0 = self.latent_to_hidden(z).unsqueeze(0)
         c0 = torch.zeros_like(h0)
         
-        # Assert hidden state shapes
-        assert h0.shape == (1, batch_size, self.hidden_dim), f"Unexpected h0 shape: {h0.shape}"
+        # Validate hidden state shapes
+        if h0.shape != (1, batch_size, self.hidden_dim):
+            raise ValueError(f"Unexpected h0 shape: {h0.shape}, expected {(1, batch_size, self.hidden_dim)}")
         
         # Initialize beams: [batch_size, beam_width, seq_len]
         # Start with padding token (0)
@@ -356,9 +360,9 @@ class SequenceDecoder(nn.Module):
                 lstm_out = self.dropout(lstm_out)
                 step_logits = self.fc_out(lstm_out).squeeze(1)  # [batch_size, vocab_size]
                 
-                # Assert shape
-                assert step_logits.shape == (batch_size, self.vocab_size), \
-                    f"Expected step_logits shape {(batch_size, self.vocab_size)}, got {step_logits.shape}"
+                # Validate shape
+                if step_logits.shape != (batch_size, self.vocab_size):
+                    raise ValueError(f"Expected step_logits shape {(batch_size, self.vocab_size)}, got {step_logits.shape}")
                 
                 # Apply temperature
                 step_logits = step_logits / temperature
@@ -368,8 +372,8 @@ class SequenceDecoder(nn.Module):
                 topk_log_probs, topk_indices = log_probs.topk(beam_width, dim=-1)
                 
                 # Boundary check before indexing
-                assert topk_indices.min() >= 0 and topk_indices.max() < self.vocab_size, \
-                    f"Token indices out of bounds: min={topk_indices.min()}, max={topk_indices.max()}"
+                if topk_indices.min() < 0 or topk_indices.max() >= self.vocab_size:
+                    raise ValueError(f"Token indices out of bounds: min={topk_indices.min()}, max={topk_indices.max()}, vocab_size={self.vocab_size}")
                 
                 # Initialize beams
                 beams[:, :, 0] = topk_indices
@@ -381,15 +385,16 @@ class SequenceDecoder(nn.Module):
             else:
                 # Subsequent steps: expand each beam
                 # Boundary check for token index
-                assert t > 0 and t < search_max_length, f"Time step {t} out of bounds [0, {search_max_length})"
+                if t <= 0 or t >= search_max_length:
+                    raise ValueError(f"Time step {t} out of bounds [0, {search_max_length})")
                 
                 # Reshape for batch processing
                 # [batch_size, beam_width, 1] -> [batch_size * beam_width, 1]
                 input_token = beams[:, :, t-1].view(-1, 1)
                 
                 # Boundary check for input tokens
-                assert input_token.min() >= 0 and input_token.max() < self.vocab_size, \
-                    f"Input tokens out of bounds: min={input_token.min()}, max={input_token.max()}"
+                if input_token.min() < 0 or input_token.max() >= self.vocab_size:
+                    raise ValueError(f"Input tokens out of bounds: min={input_token.min()}, max={input_token.max()}, vocab_size={self.vocab_size}")
                 
                 # Run LSTM
                 embedded = self.embedding(input_token)
@@ -428,10 +433,10 @@ class SequenceDecoder(nn.Module):
                 topk_token_indices = topk_indices_flat % self.vocab_size
                 
                 # Boundary checks for computed indices
-                assert topk_beam_indices.min() >= 0 and topk_beam_indices.max() < beam_width, \
-                    f"Beam indices out of bounds: min={topk_beam_indices.min()}, max={topk_beam_indices.max()}"
-                assert topk_token_indices.min() >= 0 and topk_token_indices.max() < self.vocab_size, \
-                    f"Token indices out of bounds: min={topk_token_indices.min()}, max={topk_token_indices.max()}"
+                if topk_beam_indices.min() < 0 or topk_beam_indices.max() >= beam_width:
+                    raise ValueError(f"Beam indices out of bounds: min={topk_beam_indices.min()}, max={topk_beam_indices.max()}, beam_width={beam_width}")
+                if topk_token_indices.min() < 0 or topk_token_indices.max() >= self.vocab_size:
+                    raise ValueError(f"Token indices out of bounds: min={topk_token_indices.min()}, max={topk_token_indices.max()}, vocab_size={self.vocab_size}")
                 
                 # Update beams
                 new_beams = torch.zeros_like(beams)
@@ -443,8 +448,10 @@ class SequenceDecoder(nn.Module):
                         token_idx = topk_token_indices[b, k]
                         
                         # Boundary check before copying
-                        assert 0 <= beam_idx < beam_width, f"Invalid beam_idx {beam_idx}"
-                        assert 0 <= token_idx < self.vocab_size, f"Invalid token_idx {token_idx}"
+                        if not (0 <= beam_idx < beam_width):
+                            raise ValueError(f"Invalid beam_idx {beam_idx}, must be in [0, {beam_width})")
+                        if not (0 <= token_idx < self.vocab_size):
+                            raise ValueError(f"Invalid token_idx {token_idx}, must be in [0, {self.vocab_size})")
                         
                         # Copy previous beam
                         new_beams[b, k, :t] = beams[b, beam_idx, :t]
@@ -468,8 +475,10 @@ class SequenceDecoder(nn.Module):
                         dst_idx = b * beam_width + k
                         
                         # Boundary checks
-                        assert 0 <= src_idx < h.size(1), f"Invalid src_idx {src_idx}"
-                        assert 0 <= dst_idx < h.size(1), f"Invalid dst_idx {dst_idx}"
+                        if not (0 <= src_idx < h.size(1)):
+                            raise ValueError(f"Invalid src_idx {src_idx}, must be in [0, {h.size(1)})")
+                        if not (0 <= dst_idx < h.size(1)):
+                            raise ValueError(f"Invalid dst_idx {dst_idx}, must be in [0, {h.size(1)})")
                         
                         h_new[:, dst_idx, :] = h[:, src_idx, :]
                         c_new[:, dst_idx, :] = c[:, src_idx, :]
