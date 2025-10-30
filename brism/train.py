@@ -14,6 +14,10 @@ from .loss import BRISMLoss
 # Configure logger
 logger = logging.getLogger(__name__)
 
+# Model version for checkpoint compatibility tracking
+# Update this when making breaking changes to model architecture
+BRISM_VERSION = "3.2.0"
+
 
 class EarlyStopping:
     """Early stopping to stop training when validation loss doesn't improve."""
@@ -120,7 +124,8 @@ class ModelCheckpoint:
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'metrics': metrics,
-            'config': model.config
+            'config': model.config,
+            'version': BRISM_VERSION
         }
         
         if scheduler is not None:
@@ -177,39 +182,49 @@ class ModelCheckpoint:
             self.save_checkpoint(model, optimizer, epoch, metrics, scheduler, is_best=False)
 
 
-def load_checkpoint(checkpoint_path: str, 
+def load_checkpoint(checkpoint_path: str,
                    model: BRISM,
                    optimizer: Optional[torch.optim.Optimizer] = None,
                    scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None,
                    device: Optional[torch.device] = None,
-                   weights_only: bool = False,
+                   weights_only: bool = True,
                    strict: bool = True) -> Dict:
     """
     Load model checkpoint with validation.
-    
+
     Args:
         checkpoint_path: Path to checkpoint file
         model: Model to load state into
         optimizer: Optional optimizer to load state into
         scheduler: Optional scheduler to load state into
         device: Device to load tensors to
-        weights_only: If True, only load model weights (ignore optimizer/scheduler)
+        weights_only: If True, only load model weights (ignore optimizer/scheduler).
+                     This uses torch.load(weights_only=True) which is safer but
+                     cannot load optimizer/scheduler states. Set to False to load
+                     full training state, but only from trusted checkpoint files.
         strict: If True, strictly enforce that keys match when loading state dict
-        
+
     Returns:
         Dictionary with checkpoint information
-        
+
     Raises:
         FileNotFoundError: If checkpoint file doesn't exist
         ValueError: If checkpoint is incompatible or missing required keys
+
+    Security Note:
+        When weights_only=False, this function uses torch.load with weights_only=False
+        to support loading optimizer and scheduler states. Only use this with
+        checkpoint files from trusted sources to avoid arbitrary code execution.
     """
     # Verify file exists
     if not Path(checkpoint_path).exists():
         raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
     
-    # Load checkpoint
+    # Load checkpoint with appropriate security level
     try:
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        # Use weights_only=True for safety when only loading model weights
+        # Use weights_only=False when optimizer/scheduler states are needed
+        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=weights_only)
     except Exception as e:
         raise ValueError(f"Failed to load checkpoint from {checkpoint_path}: {str(e)}")
     
@@ -234,9 +249,23 @@ def load_checkpoint(checkpoint_path: str,
     # Version check (if version info is available)
     if 'version' in checkpoint:
         checkpoint_version = checkpoint['version']
-        # Simple version warning (can be extended)
         logger.info(f"Loading checkpoint from version: {checkpoint_version}")
-        # Could add compatibility checks here
+
+        # Check version compatibility
+        if checkpoint_version != BRISM_VERSION:
+            import warnings
+            warnings.warn(
+                f"Checkpoint version ({checkpoint_version}) differs from current BRISM version ({BRISM_VERSION}). "
+                f"This may cause compatibility issues if there were breaking changes between versions. "
+                f"Check CHANGELOG.md for migration information.",
+                UserWarning
+            )
+    else:
+        logger.warning(
+            "Checkpoint does not contain version information. "
+            "It may have been created with an older version of BRISM (<3.2.0). "
+            "Proceed with caution."
+        )
     
     # Validate model architecture compatibility
     model_state = checkpoint['model_state_dict']
@@ -376,7 +405,7 @@ def train_brism(
     checkpoint_dir: Optional[str] = None,
     early_stopping_patience: Optional[int] = None,
     save_best_only: bool = True,
-    max_grad_norm: Optional[float] = None,
+    max_grad_norm: float = 1.0,
     show_progress: bool = False
 ) -> Dict[str, list]:
     """
@@ -402,8 +431,9 @@ def train_brism(
         checkpoint_dir: Optional directory to save checkpoints
         early_stopping_patience: Optional patience for early stopping (None = no early stopping)
         save_best_only: Only save best model based on validation loss
-        max_grad_norm: Optional maximum gradient norm for clipping (None = no clipping).
-                      Helps prevent gradient explosion, especially with focal loss.
+        max_grad_norm: Maximum gradient norm for clipping (default=1.0).
+                      Helps prevent gradient explosion, especially with focal loss and VAE.
+                      Set to None to disable clipping (not recommended).
         show_progress: If True and tqdm is available, show progress bar during training
         
     Returns:

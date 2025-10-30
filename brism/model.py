@@ -33,6 +33,12 @@ class BRISMConfig:
     temperature: float = 1.0  # Temperature parameter for probability calibration
     beam_width: int = 5  # For beam search generation
     n_ensemble_models: int = 5  # For pseudo-ensemble
+    gumbel_temperature: float = 1.0  # Temperature for Gumbel-softmax in cycle consistency
+    use_hard_gumbel: bool = False  # If True, use hard gumbel (one-hot) after softmax
+
+    # Token indices
+    pad_token_id: int = 0  # Padding token ID for symptom sequences
+    eos_token_id: int = 0  # End-of-sequence token ID (defaults to pad_token_id)
     
     def __post_init__(self):
         """Validate configuration parameters."""
@@ -79,6 +85,16 @@ class BRISMConfig:
         # Validate ensemble models
         if self.n_ensemble_models < 1:
             raise ValueError(f"n_ensemble_models must be at least 1, got {self.n_ensemble_models}")
+
+        # Validate gumbel temperature
+        if self.gumbel_temperature <= 0.0:
+            raise ValueError(f"gumbel_temperature must be positive, got {self.gumbel_temperature}")
+
+        # Validate token IDs
+        if self.pad_token_id < 0 or self.pad_token_id >= self.symptom_vocab_size:
+            raise ValueError(f"pad_token_id ({self.pad_token_id}) must be in range [0, {self.symptom_vocab_size})")
+        if self.eos_token_id < 0 or self.eos_token_id >= self.symptom_vocab_size:
+            raise ValueError(f"eos_token_id ({self.eos_token_id}) must be in range [0, {self.symptom_vocab_size})")
 
 
 class Encoder(nn.Module):
@@ -218,6 +234,9 @@ class SequenceDecoder(nn.Module):
         else:
             # Autoregressive generation
             logits_list = []
+            # Start with padding/start token (typically 0, but configurable)
+            # Note: config not available in SequenceDecoder, so we use hardcoded 0
+            # This should be passed as parameter if custom start token is needed
             input_token = torch.zeros(batch_size, 1, dtype=torch.long, device=z.device)
             hidden = (h0, c0)
             
@@ -235,13 +254,14 @@ class SequenceDecoder(nn.Module):
         return logits
     
     def beam_search(
-        self, 
-        z: torch.Tensor, 
-        beam_width: int = 5, 
+        self,
+        z: torch.Tensor,
+        beam_width: int = 5,
         temperature: float = 1.0,
         length_penalty: float = 1.0,
         max_length: Optional[int] = None,
-        max_batch_size: Optional[int] = None
+        max_batch_size: Optional[int] = None,
+        eos_token_id: int = 0
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Generate sequences using beam search.
@@ -254,6 +274,7 @@ class SequenceDecoder(nn.Module):
             max_length: Maximum sequence length (defaults to self.max_length)
             max_batch_size: Maximum batch size to process at once (for memory efficiency).
                           If None, processes all batches together. If set, processes in chunks.
+            eos_token_id: End-of-sequence token ID (default=0, padding token)
             
         Returns:
             sequences: Top beam_width sequences [batch_size, beam_width, seq_len]
@@ -275,7 +296,8 @@ class SequenceDecoder(nn.Module):
                 
                 # Recursively call beam_search on chunk (without max_batch_size to avoid infinite recursion)
                 chunk_sequences, chunk_scores, chunk_lengths = self.beam_search(
-                    z_chunk, beam_width, temperature, length_penalty, max_length, max_batch_size=None
+                    z_chunk, beam_width, temperature, length_penalty, max_length,
+                    max_batch_size=None, eos_token_id=eos_token_id
                 )
                 
                 all_sequences.append(chunk_sequences)
@@ -303,16 +325,31 @@ class SequenceDecoder(nn.Module):
         # Safety check for maximum length
         search_max_length = min(max_length or self.max_length, self.max_length * 2)  # Cap at 2x model max
         
-        # Validate beam_width * max_length * vocab_size to prevent OOM errors
-        # Estimate memory requirements: beam_width beams, each with max_length tokens,
-        # and vocab_size logits per token position
-        estimated_memory = beam_width * search_max_length * self.vocab_size
-        if estimated_memory > 100_000_000:  # 100 million elements
+        # Validate memory requirements to prevent OOM errors
+        # Estimate total memory needed (in number of float32 elements):
+        # - Beam storage: batch_size * beam_width * max_length
+        # - Hidden states: batch_size * beam_width * hidden_dim * 2 (h and c)
+        # - Logits: batch_size * beam_width * vocab_size
+        # - Candidate scores: batch_size * beam_width * vocab_size
+        beam_storage = batch_size * beam_width * search_max_length
+        hidden_states = batch_size * beam_width * self.hidden_dim * 2
+        logit_storage = batch_size * beam_width * self.vocab_size
+        candidate_scores = batch_size * beam_width * self.vocab_size
+
+        estimated_memory = beam_storage + hidden_states + logit_storage + candidate_scores
+        memory_limit = 500_000_000  # 500 million elements (~2GB for float32)
+
+        if estimated_memory > memory_limit:
             raise ValueError(
-                f"Beam search memory requirements too large: beam_width ({beam_width}) * "
-                f"max_length ({search_max_length}) * vocab_size ({self.vocab_size}) = "
-                f"{estimated_memory} exceeds limit of 100,000,000 elements. "
-                f"Reduce beam_width or max_length to avoid out-of-memory errors."
+                f"Beam search memory requirements too large:\n"
+                f"  Batch size: {batch_size}\n"
+                f"  Beam width: {beam_width}\n"
+                f"  Max length: {search_max_length}\n"
+                f"  Hidden dim: {self.hidden_dim}\n"
+                f"  Vocab size: {self.vocab_size}\n"
+                f"  Estimated memory: {estimated_memory:,} elements (~{estimated_memory * 4 / 1e9:.2f}GB)\n"
+                f"  Limit: {memory_limit:,} elements (~{memory_limit * 4 / 1e9:.2f}GB)\n"
+                f"Reduce batch_size, beam_width, or max_length, or use max_batch_size parameter."
             )
         
         # Initialize hidden state from latent
@@ -457,9 +494,9 @@ class SequenceDecoder(nn.Module):
                         new_beams[b, k, :t] = beams[b, beam_idx, :t]
                         # Add new token
                         new_beams[b, k, t] = token_idx
-                        
-                        # Update finished status
-                        new_finished[b, k] = finished[b, beam_idx] or (token_idx == 0)
+
+                        # Update finished status (beam finishes when EOS token is generated)
+                        new_finished[b, k] = finished[b, beam_idx] or (token_idx == eos_token_id)
                 
                 beams = new_beams
                 beam_scores = topk_scores
@@ -490,27 +527,32 @@ class SequenceDecoder(nn.Module):
                 break
         
         # Apply length penalty
+        # Note: Length calculation assumes padding token is 0
+        # If using custom padding tokens, this may need adjustment
         lengths = (beams != 0).sum(dim=-1).float()
         beam_scores = beam_scores / (lengths ** length_penalty + 1e-10)
-        
+
         return beams, beam_scores, lengths.long()
 
 
 class BRISM(nn.Module):
     """
     Bayesian Reciprocal ICD-Symptom Model.
-    
+
     Dual encoder-decoder architecture with shared latent space:
     - Forward: symptoms -> encoder -> latent -> decoder -> ICD probabilities
     - Reverse: ICD codes -> encoder -> latent -> decoder -> symptom sequence
     """
-    
+
     def __init__(self, config: BRISMConfig):
         super().__init__()
         self.config = config
-        
-        # Temperature parameter for calibration (learnable)
+
+        # Temperature parameter for calibration (learnable, but constrained)
         self.temperature = nn.Parameter(torch.ones(1) * config.temperature)
+        # Temperature bounds to prevent extreme values
+        self.register_buffer('temperature_min', torch.tensor(0.01))
+        self.register_buffer('temperature_max', torch.tensor(10.0))
         
         # Embeddings
         self.symptom_embedding = nn.Embedding(config.symptom_vocab_size, config.symptom_embed_dim)
@@ -557,6 +599,15 @@ class BRISM(nn.Module):
             config.dropout_rate
         )
         
+    def get_clamped_temperature(self) -> torch.Tensor:
+        """
+        Get temperature clamped to safe range to prevent numerical instability.
+
+        Returns:
+            Clamped temperature value
+        """
+        return torch.clamp(self.temperature, self.temperature_min, self.temperature_max)
+
     def reparameterize(self, mu: torch.Tensor, logvar: torch.Tensor) -> torch.Tensor:
         """
         Reparameterization trick for VAE.
@@ -590,17 +641,18 @@ class BRISM(nn.Module):
         
         # Apply temporal encoding (always enabled)
         symptom_embeds = self.temporal_encoding(symptom_embeds, timestamps)
-        
+
         # Aggregate symptoms with attention (always enabled)
-        mask = (symptoms != 0).float()  # [B, L]
+        # Create mask: 1 for real tokens, 0 for padding
+        mask = (symptoms != self.config.pad_token_id).float()  # [B, L]
         symptom_repr, _ = self.symptom_attention(symptom_embeds, mask)  # [B, D]
         
         # Encode to latent
         mu, logvar = self.symptom_encoder(symptom_repr)
         z = self.reparameterize(mu, logvar)
-        
-        # Decode to ICD with temperature scaling
-        icd_logits = self.icd_decoder(z) / self.temperature
+
+        # Decode to ICD with temperature scaling (clamped for safety)
+        icd_logits = self.icd_decoder(z) / self.get_clamped_temperature()
 
         return icd_logits, mu, logvar
 
@@ -659,45 +711,95 @@ class BRISM(nn.Module):
     def cycle_forward(self, symptoms: torch.Tensor, target_symptoms: Optional[torch.Tensor] = None) -> Tuple:
         """
         Cycle: symptoms -> latent -> ICD -> latent' -> symptoms'.
-        
+
+        Uses Gumbel-softmax for differentiable sampling to maintain gradient flow.
+
         Args:
             symptoms: Input symptom sequence [batch_size, seq_len]
             target_symptoms: Target for reconstruction [batch_size, seq_len]
-            
+
         Returns:
             Tuple of intermediate and final outputs
         """
         # Forward: symptoms -> ICD
         icd_logits, mu1, logvar1 = self.forward_path(symptoms)
-        
-        # Get predicted ICD (hard decision for cycle)
-        icd_pred = icd_logits.argmax(dim=-1)
-        
-        # Reverse: ICD -> symptoms
-        symptom_logits, mu2, logvar2 = self.reverse_path(icd_pred, target_symptoms)
-        
+
+        # Get predicted ICD using Gumbel-softmax for differentiable sampling
+        if self.training:
+            # Use Gumbel-softmax during training for gradient flow
+            icd_soft = F.gumbel_softmax(
+                icd_logits,
+                tau=self.config.gumbel_temperature,
+                hard=self.config.use_hard_gumbel,
+                dim=-1
+            )
+            # Get soft ICD embedding: weighted sum of all ICD embeddings
+            icd_embed_soft = torch.matmul(icd_soft, self.icd_embedding.weight)
+        else:
+            # Use hard decision during evaluation
+            icd_pred = icd_logits.argmax(dim=-1)
+            icd_embed_soft = self.icd_embedding(icd_pred)
+
+        # Encode soft ICD embedding to latent
+        mu2, logvar2 = self.icd_encoder(icd_embed_soft)
+        z = self.reparameterize(mu2, logvar2)
+
+        # Decode to symptoms
+        symptom_logits = self.symptom_decoder(z, target_symptoms)
+
         return symptom_logits, icd_logits, mu1, logvar1, mu2, logvar2
     
     def cycle_reverse(self, icd_codes: torch.Tensor, target_symptoms: Optional[torch.Tensor] = None) -> Tuple:
         """
         Cycle: ICD -> latent -> symptoms -> latent' -> ICD'.
-        
+
+        Uses Gumbel-softmax for differentiable sampling to maintain gradient flow.
+
         Args:
             icd_codes: Input ICD codes [batch_size]
             target_symptoms: Target symptoms for intermediate step [batch_size, seq_len]
-            
+
         Returns:
             Tuple of intermediate and final outputs
         """
         # Reverse: ICD -> symptoms
         symptom_logits, mu1, logvar1 = self.reverse_path(icd_codes, target_symptoms)
-        
-        # Get predicted symptoms (use argmax for hard decision)
-        symptom_pred = symptom_logits.argmax(dim=-1)
-        
-        # Forward: symptoms -> ICD
-        icd_logits, mu2, logvar2 = self.forward_path(symptom_pred)
-        
+
+        # Get predicted symptoms using Gumbel-softmax for differentiable sampling
+        # symptom_logits shape: [batch_size, seq_len, vocab_size]
+        batch_size, seq_len, vocab_size = symptom_logits.shape
+
+        if self.training:
+            # Use Gumbel-softmax during training for gradient flow
+            # Reshape to apply gumbel_softmax over vocab dimension
+            symptom_soft = F.gumbel_softmax(
+                symptom_logits.view(-1, vocab_size),
+                tau=self.config.gumbel_temperature,
+                hard=self.config.use_hard_gumbel,
+                dim=-1
+            ).view(batch_size, seq_len, vocab_size)
+
+            # Get soft symptom embeddings: weighted sum of all symptom embeddings
+            symptom_embeds_soft = torch.matmul(symptom_soft, self.symptom_embedding.weight)
+        else:
+            # Use hard decision during evaluation
+            symptom_pred = symptom_logits.argmax(dim=-1)
+            symptom_embeds_soft = self.symptom_embedding(symptom_pred)
+
+        # Apply temporal encoding
+        symptom_embeds_soft = self.temporal_encoding(symptom_embeds_soft, timestamps=None)
+
+        # Aggregate symptoms with attention
+        mask = torch.ones(batch_size, seq_len, device=symptom_logits.device)
+        symptom_repr, _ = self.symptom_attention(symptom_embeds_soft, mask)
+
+        # Encode to latent
+        mu2, logvar2 = self.symptom_encoder(symptom_repr)
+        z = self.reparameterize(mu2, logvar2)
+
+        # Decode to ICD with temperature scaling (clamped for safety)
+        icd_logits = self.icd_decoder(z) / self.get_clamped_temperature()
+
         return icd_logits, symptom_logits, mu1, logvar1, mu2, logvar2
     
     def predict_with_uncertainty(self, symptoms: torch.Tensor, n_samples: Optional[int] = None) -> Tuple[torch.Tensor, torch.Tensor]:

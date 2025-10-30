@@ -12,7 +12,8 @@ from .icd_hierarchy import ICDHierarchy, compute_hierarchical_loss
 def compute_class_weights(
     class_counts: Dict[int, int],
     num_classes: int,
-    smoothing: float = 1.0
+    smoothing: float = 1.0,
+    warn_missing: bool = True
 ) -> torch.Tensor:
     """
     Compute inverse frequency weights for class balancing.
@@ -20,24 +21,58 @@ def compute_class_weights(
     Args:
         class_counts: Dictionary mapping class index to count
         num_classes: Total number of classes
-        smoothing: Smoothing factor to avoid extreme weights
+        smoothing: Smoothing factor to avoid extreme weights (applied to missing classes)
+        warn_missing: If True, warn about classes with zero samples
 
     Returns:
         Class weights tensor [num_classes]
     """
-    # Initialize all weights to smoothing value
+    # Initialize all weights to smoothing value (for classes not in class_counts)
     weights = torch.ones(num_classes) * smoothing
 
     # Compute total samples
     total_samples = sum(class_counts.values())
 
+    if total_samples == 0:
+        raise ValueError("Total sample count is zero. class_counts must contain at least one sample.")
+
+    # Track missing classes
+    missing_classes = []
+
     # Compute inverse frequency weights
-    for class_idx, count in class_counts.items():
-        # Validate class_idx is within bounds
+    for class_idx in range(num_classes):
+        if class_idx in class_counts:
+            count = class_counts[class_idx]
+            if count > 0:
+                weights[class_idx] = total_samples / (num_classes * count)
+            else:
+                missing_classes.append(class_idx)
+        else:
+            missing_classes.append(class_idx)
+
+    # Validate class indices in class_counts
+    for class_idx in class_counts.keys():
         if class_idx < 0 or class_idx >= num_classes:
             raise ValueError(f"class_idx {class_idx} is out of bounds for num_classes={num_classes}")
-        if count > 0:
-            weights[class_idx] = total_samples / (num_classes * count)
+
+    # Warn about missing classes
+    if warn_missing and missing_classes:
+        import warnings
+        if len(missing_classes) <= 10:
+            warnings.warn(
+                f"Found {len(missing_classes)} classes with zero samples: {missing_classes}. "
+                f"These will use smoothing weight ({smoothing:.3f}). "
+                f"This may indicate class imbalance or incomplete training data.",
+                UserWarning
+            )
+        else:
+            warnings.warn(
+                f"Found {len(missing_classes)} classes with zero samples (showing first 10): "
+                f"{missing_classes[:10]}... "
+                f"These will use smoothing weight ({smoothing:.3f}). "
+                f"This may indicate severe class imbalance or incomplete training data.",
+                UserWarning
+            )
 
     # Normalize weights to have mean of 1.0
     weights = weights / weights.mean()
@@ -64,9 +99,25 @@ class FocalLoss(nn.Module):
         Args:
             alpha: Class weights [num_classes] or None
             gamma: Focusing parameter (0 = cross-entropy, higher = more focus on hard examples)
+                  Typical range: 0.5-5.0. Higher values focus more on hard examples.
+                  gamma=0 reduces to standard cross-entropy.
+                  gamma=2 is the default from the original Focal Loss paper.
             reduction: 'mean', 'sum', or 'none'
         """
         super().__init__()
+
+        # Validate gamma parameter
+        if gamma < 0:
+            raise ValueError(f"gamma must be non-negative, got {gamma}")
+        if gamma > 10:
+            import warnings
+            warnings.warn(
+                f"gamma={gamma} is very large (typical range: 0.5-5.0). "
+                f"Very large gamma values can cause gradient instability and slow training. "
+                f"Consider using a smaller value.",
+                UserWarning
+            )
+
         self.alpha = alpha
         self.gamma = gamma
         self.reduction = reduction
